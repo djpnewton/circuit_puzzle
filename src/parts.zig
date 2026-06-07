@@ -368,7 +368,7 @@ fn drawLed(pos: rl.Vector3, o: Orientation, powered: bool) void {
     const lead_color = rl.Color.init(190, 190, 195, 255);
     const die_color = partColor(.led);
     const epoxy_color = if (powered)
-        rl.Color.init(255, 245, 80, 220)
+        rl.Color.init(255, 80, 80, 220)
     else
         rl.Color.init(255, 120, 120, 110);
 
@@ -434,9 +434,9 @@ fn drawLed(pos: rl.Vector3, o: Orientation, powered: bool) void {
     // --- Glow when powered ---
     if (powered) {
         const dome_center = rl.Vector3{ .x = pos.x, .y = body_top_y, .z = pos.z };
-        rl.drawSphere(dome_center, s * 0.38, rl.Color.init(255, 255, 160, 55));
-        rl.drawSphere(dome_center, s * 0.55, rl.Color.init(255, 230, 100, 30));
-        rl.drawSphere(dome_center, s * 0.80, rl.Color.init(255, 210, 60, 14));
+        rl.drawSphere(dome_center, s * 0.38, rl.Color.init(255, 160, 160, 55));
+        rl.drawSphere(dome_center, s * 0.55, rl.Color.init(255, 100, 100, 30));
+        rl.drawSphere(dome_center, s * 0.80, rl.Color.init(255, 60, 60, 14));
         // soft light pool on the ground
         rl.drawCylinder(
             .{ .x = pos.x, .y = pos.y + world.BLOCK_SIZE * 0.01, .z = pos.z },
@@ -444,7 +444,7 @@ fn drawLed(pos: rl.Vector3, o: Orientation, powered: bool) void {
             s * 0.9,
             0.002,
             24,
-            rl.Color.init(255, 240, 130, 40),
+            rl.Color.init(255, 130, 130, 40),
         );
     }
 

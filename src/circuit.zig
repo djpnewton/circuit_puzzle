@@ -23,6 +23,17 @@ const parts = @import("parts.zig");
 /// Maximum number of parts the map may hold (must match map.zig).
 const MAX_PARTS = 8;
 
+/// Voltage supplied by a single battery cell.
+pub const CELL_VOLTAGE: f32 = 1.5;
+/// Forward voltage drop across a red LED.
+pub const LED_FORWARD_VOLTAGE: f32 = 1.8;
+
+/// Per-part voltage stats written by `simulate`.
+pub const ComponentStats = struct {
+    volts_in: f32 = 0,
+    voltage_drop: f32 = 0,
+};
+
 const GPos = struct { x: i32, z: i32 };
 
 fn toGrid(pos: rl.Vector3) GPos {
@@ -41,8 +52,8 @@ fn dirDelta(d: parts.Dir) GPos {
     };
 }
 
-/// BFS node: "current is exiting part `idx` through port `exit`."
-const ExitNode = struct { idx: u8, exit: parts.Dir };
+/// BFS node: "current is exiting part `idx` through port `exit` at `voltage` volts."
+const ExitNode = struct { idx: u8, exit: parts.Dir, voltage: f32 };
 
 /// Simulate the circuit.
 ///
@@ -54,9 +65,11 @@ pub fn simulate(
     part_arr: []const parts.Part,
     pos_arr: []const rl.Vector3,
     powered: []bool,
+    stats: []ComponentStats,
 ) void {
     const n = part_arr.len;
     @memset(powered, false);
+    for (stats[0..n]) |*s| s.* = .{};
 
     // Grid positions for fast adjacency lookup.
     var grid: [MAX_PARTS]GPos = undefined;
@@ -75,16 +88,22 @@ pub fn simulate(
     const batt_plus = parts.batteryPlusDir(part_arr[b].orientation);
     const batt_minus = parts.opposite(batt_plus);
 
-    // visited[i * 4 + dir_index] = current has arrived at part i from that dir.
-    var visited = [_]bool{false} ** (MAX_PARTS * 4);
+    // Cell always show its EMF regardless of circuit state.
+    for (part_arr[0..n], 0..) |p, i| {
+        if (p.kind == .cell) stats[i] = .{ .volts_in = CELL_VOLTAGE, .voltage_drop = 0 };
+    }
+
+    // max_volt[i * 4 + dir] = highest voltage seen arriving at part i from dir.
+    // A node is only re-processed if a higher voltage path reaches it.
+    var max_volt = [_]f32{0.0} ** (MAX_PARTS * 4);
 
     // BFS queue.  Upper bound: each port visited at most once.
     var queue: [MAX_PARTS * 4]ExitNode = undefined;
     var qhead: usize = 0;
     var qtail: usize = 0;
 
-    // Seed: current exits the battery through its + port.
-    queue[qtail] = .{ .idx = @intCast(b), .exit = batt_plus };
+    // Seed: current exits the battery through its + port at full cell voltage.
+    queue[qtail] = .{ .idx = @intCast(b), .exit = batt_plus, .voltage = CELL_VOLTAGE };
     qtail += 1;
 
     var circuit_closed = false;
@@ -115,23 +134,46 @@ pub fn simulate(
         // Neighbour must expose a port in the arrival direction.
         if (nb_ports[0] != arr_dir and nb_ports[1] != arr_dir) continue;
 
-        // Avoid revisiting the same (part, arrival) state.
+        // Skip if we've already arrived here with equal or higher voltage.
         const vk = nb * 4 + @as(usize, @intFromEnum(arr_dir));
-        if (visited[vk]) continue;
-        visited[vk] = true;
+        if (cur.voltage <= max_volt[vk]) continue;
+        max_volt[vk] = cur.voltage;
 
-        // Did we reach the battery's − terminal? then circuit is closed.
+        // Did we reach the primary battery's − terminal? then circuit is closed.
         if (nb == b and arr_dir == batt_minus) {
             circuit_closed = true;
             continue; // don't propagate through the battery
         }
-        // Don't propagate through any battery's internals.
-        if (part_arr[nb].kind == .cell) continue;
+        // A secondary cell in series: current must enter its − terminal.
+        // If it does, boost voltage by CELL_VOLTAGE and continue from its + terminal.
+        // Arriving at the + terminal means reverse polarity so block.
+        if (part_arr[nb].kind == .cell) {
+            const cell_plus = parts.batteryPlusDir(part_arr[nb].orientation);
+            const cell_minus = parts.opposite(cell_plus);
+            if (arr_dir != cell_minus) continue; // reverse, block
+            const v_boosted = cur.voltage + CELL_VOLTAGE;
+            if (qtail < queue.len) {
+                queue[qtail] = .{ .idx = @intCast(nb), .exit = cell_plus, .voltage = v_boosted };
+                qtail += 1;
+            }
+            continue;
+        }
 
-        // LEDs are diodes: current must enter the anode (port[0]).
-        // Reverse-biased: block current and leave unpowered.
+        // Record voltage stats for this component.
+        const v_drop: f32 = switch (part_arr[nb].kind) {
+            .led => LED_FORWARD_VOLTAGE,
+            else => 0.0,
+        };
+        stats[nb].volts_in = cur.voltage;
+        stats[nb].voltage_drop = v_drop;
+        const v_out = @max(0.0, cur.voltage - v_drop);
+
+        // LEDs are diodes: current must enter the anode (port[0]) AND
+        // there must be sufficient forward voltage to overcome the barrier.
+        // Either condition failing breaks the circuit at this LED.
         if (part_arr[nb].kind == .led) {
             if (arr_dir != nb_ports[0]) continue;
+            if (cur.voltage < LED_FORWARD_VOLTAGE) continue;
             powered[nb] = true;
         }
 
@@ -139,12 +181,17 @@ pub fn simulate(
         for (nb_ports) |port_dir| {
             if (port_dir == arr_dir) continue;
             if (qtail < queue.len) {
-                queue[qtail] = .{ .idx = @intCast(nb), .exit = port_dir };
+                queue[qtail] = .{ .idx = @intCast(nb), .exit = port_dir, .voltage = v_out };
                 qtail += 1;
             }
         }
     }
 
-    // LEDs only count if the loop was actually closed.
-    if (!circuit_closed) @memset(powered, false);
+    // LEDs and voltage stats (except cell EMF) only count if loop is closed.
+    if (!circuit_closed) {
+        @memset(powered, false);
+        for (stats[0..n], part_arr[0..n]) |*s, p| {
+            if (p.kind != .cell) s.* = .{};
+        }
+    }
 }

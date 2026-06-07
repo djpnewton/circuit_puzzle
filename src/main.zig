@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const rl = @import("raylib");
 
@@ -153,7 +154,8 @@ pub fn main(_: std.process.Init) !void {
         }
 
         // --- 2D UI -------------------------------------------------------
-        if (selected_part != null) {
+        if (selected_part) |idx| {
+            ui.drawStatsPanel(m.parts[idx].part.kind, m.stats[idx].volts_in, m.stats[idx].voltage_drop);
             info_btn.draw();
             rotate_btn.draw();
         }
@@ -161,6 +163,13 @@ pub fn main(_: std.process.Init) !void {
             if (selected_part) |idx| {
                 ui.InfoModal.draw(m.parts[idx].part.kind);
             }
+        }
+        if (builtin.mode == .Debug) {
+            if (ui.DebugSolveButton.update()) {
+                m.debugSolve();
+                selected_part = null;
+            }
+            ui.DebugSolveButton.draw();
         }
     }
 }

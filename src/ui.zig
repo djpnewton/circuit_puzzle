@@ -78,6 +78,93 @@ pub const MultiLine = struct {
     }
 };
 
+/// Small rectangular debug-only button at the bottom-right of the screen.
+/// Call `update()` once per frame; returns true when clicked.
+/// Call `draw()` to render it.
+pub const DebugSolveButton = struct {
+    const W: i32 = 90;
+    const H: i32 = 32;
+    const MARGIN: i32 = 12;
+
+    fn bounds() struct { x: i32, y: i32 } {
+        return .{
+            .x = rl.getScreenWidth() - W - MARGIN,
+            .y = rl.getScreenHeight() - H - MARGIN,
+        };
+    }
+
+    pub fn update() bool {
+        if (!input.isPointerPressed()) return false;
+        const b = bounds();
+        const mp = input.getPointerPosition();
+        const mx: i32 = @intFromFloat(mp.x);
+        const my: i32 = @intFromFloat(mp.y);
+        return mx >= b.x and mx <= b.x + W and my >= b.y and my <= b.y + H;
+    }
+
+    pub fn draw() void {
+        const b = bounds();
+        const mp = input.getPointerPosition();
+        const mx: i32 = @intFromFloat(mp.x);
+        const my: i32 = @intFromFloat(mp.y);
+        const hovered = mx >= b.x and mx <= b.x + W and my >= b.y and my <= b.y + H;
+        const bg = if (hovered)
+            rl.Color.init(180, 60, 60, 230)
+        else
+            rl.Color.init(120, 30, 30, 210);
+        rl.drawRectangleRounded(
+            .{ .x = @floatFromInt(b.x), .y = @floatFromInt(b.y), .width = @floatFromInt(W), .height = @floatFromInt(H) },
+            0.3,
+            6,
+            bg,
+        );
+        const label = "SOLVE";
+        const lw = rl.measureText(label, 14);
+        rl.drawText(label, b.x + @divTrunc(W - lw, 2), b.y + @divTrunc(H - 14, 2), 14, rl.Color.white);
+    }
+};
+
+/// Small overlay panel shown at top-left when a part is selected.
+/// Displays the part name, input voltage, and voltage drop.
+pub fn drawStatsPanel(kind: parts.PartType, volts_in: f32, voltage_drop: f32) void {
+    const x: i32 = 12;
+    const y: i32 = 12;
+    const w: i32 = 250;
+    const h: i32 = 90;
+    const pad: i32 = 10;
+
+    rl.drawRectangleRounded(
+        .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .width = @floatFromInt(w), .height = @floatFromInt(h) },
+        0.1,
+        6,
+        rl.Color.init(20, 20, 35, 210),
+    );
+    rl.drawRectangleLines(x, y, w, h, rl.Color.init(80, 80, 110, 200));
+
+    const label_color = rl.Color.init(140, 140, 170, 255);
+    const val_color = rl.Color.init(255, 240, 130, 255);
+
+    // Part name
+    rl.drawText(parts.name(kind), x + pad, y + pad, 16, rl.Color.white);
+
+    // Row 1: Volts in ("EMF" for cells)
+    const in_label: [:0]const u8 = if (kind == .cell) "EMF (Electromotive Force):" else "Volts in:";
+    rl.drawText(in_label, x + pad, y + pad + 28, 14, label_color);
+    var buf1: [32]u8 = undefined;
+    const in_str = std.fmt.bufPrintZ(&buf1, "{d:.2}V", .{volts_in}) catch "?";
+    const in_w = rl.measureText(in_str, 14);
+    rl.drawText(in_str, x + w - pad - in_w, y + pad + 28, 14, val_color);
+
+    // Row 2: Voltage drop
+    if (kind != .cell) {
+        rl.drawText("Voltage drop:", x + pad, y + pad + 52, 14, label_color);
+        var buf2: [32]u8 = undefined;
+        const drop_str = std.fmt.bufPrintZ(&buf2, "{d:.2}V", .{voltage_drop}) catch "?";
+        const drop_w = rl.measureText(drop_str, 14);
+        rl.drawText(drop_str, x + w - pad - drop_w, y + pad + 52, 14, val_color);
+    }
+}
+
 /// A circular info button that opens the part info modal.
 /// Call `update()` once per frame; it returns true when clicked.
 /// Call `draw()` to render it (outside any beginMode3D block).

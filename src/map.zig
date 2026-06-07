@@ -17,17 +17,18 @@ pub const Map = struct {
     world: world.World,
     parts: [8]PartInstance,
     powered: [8]bool = [_]bool{false} ** 8,
+    stats: [8]circuit.ComponentStats = [_]circuit.ComponentStats{.{}} ** 8,
 
     pub fn init() !Map {
         const w = try world.World.init();
         const parts_arr = [_]PartInstance{
-            .{ .part = .{ .kind = .wire_corner, .orientation = .rot0 }, .pos = .{ .x = 1.0, .y = 0.5, .z = 1.0 } },
-            .{ .part = .{ .kind = .wire_corner, .orientation = .rot90 }, .pos = .{ .x = 3.0, .y = 0.5, .z = 1.0 } },
-            .{ .part = .{ .kind = .wire_corner, .orientation = .rot180 }, .pos = .{ .x = 3.0, .y = 0.5, .z = 3.0 } },
-            .{ .part = .{ .kind = .wire_corner, .orientation = .rot270 }, .pos = .{ .x = 1.0, .y = 0.5, .z = 3.0 } },
+            .{ .part = .{ .kind = .wire_corner, .orientation = .rot90 }, .pos = .{ .x = 1.0, .y = 0.5, .z = 1.0 } },
+            .{ .part = .{ .kind = .wire_corner, .orientation = .rot0 }, .pos = .{ .x = 3.0, .y = 0.5, .z = 1.0 } },
+            .{ .part = .{ .kind = .wire_corner, .orientation = .rot270 }, .pos = .{ .x = 3.0, .y = 0.5, .z = 3.0 } },
+            .{ .part = .{ .kind = .wire_corner, .orientation = .rot180 }, .pos = .{ .x = 1.0, .y = 0.5, .z = 3.0 } },
             .{ .part = .{ .kind = .cell }, .pos = .{ .x = 0.0, .y = 0.5, .z = 0.0 } },
             .{ .part = .{ .kind = .wire_straight, .orientation = .rot90 }, .pos = .{ .x = 2.0, .y = 0.5, .z = 0.0 } },
-            .{ .part = .{ .kind = .wire_straight, .orientation = .rot90 }, .pos = .{ .x = 4.0, .y = 0.5, .z = 2.0 } },
+            .{ .part = .{ .kind = .cell, .orientation = .rot0 }, .pos = .{ .x = 4.0, .y = 0.5, .z = 2.0 } },
             .{ .part = .{ .kind = .led }, .pos = .{ .x = 0.0, .y = 0.5, .z = 4.0 } },
         };
 
@@ -43,13 +44,13 @@ pub const Map = struct {
 
     /// Re-run the circuit simulation after any part is moved.
     pub fn updateCircuit(self: *Map) void {
-        var part_arr: [8]parts.Part    = undefined;
-        var pos_arr:  [8]rl.Vector3    = undefined;
+        var part_arr: [8]parts.Part = undefined;
+        var pos_arr: [8]rl.Vector3 = undefined;
         for (self.parts, 0..) |inst, i| {
             part_arr[i] = inst.part;
-            pos_arr[i]  = inst.pos;
+            pos_arr[i] = inst.pos;
         }
-        circuit.simulate(&part_arr, &pos_arr, &self.powered);
+        circuit.simulate(&part_arr, &pos_arr, &self.powered, &self.stats);
     }
 
     /// Returns true if any part other than `ignore_idx` occupies `pos`
@@ -81,5 +82,19 @@ pub const Map = struct {
         for (self.parts, 0..) |part, i| {
             part.draw(self.powered[i]);
         }
+    }
+
+    /// Debug: snap all parts to the known solution positions/orientations.
+    pub fn debugSolve(self: *Map) void {
+        const y = self.parts[0].pos.y; // keep existing terrain height
+        self.parts[0] = .{ .part = .{ .kind = .wire_corner, .orientation = .rot90 }, .pos = .{ .x = 0.0, .y = y, .z = 0.0 } };
+        self.parts[1] = .{ .part = .{ .kind = .wire_corner, .orientation = .rot0 }, .pos = .{ .x = 2.0, .y = y, .z = 0.0 } };
+        self.parts[2] = .{ .part = .{ .kind = .wire_corner, .orientation = .rot270 }, .pos = .{ .x = 2.0, .y = y, .z = 2.0 } };
+        self.parts[3] = .{ .part = .{ .kind = .wire_corner, .orientation = .rot180 }, .pos = .{ .x = 0.0, .y = y, .z = 2.0 } };
+        self.parts[4] = .{ .part = .{ .kind = .cell, .orientation = .rot270 }, .pos = .{ .x = 0.0, .y = y, .z = 1.0 } };
+        self.parts[5] = .{ .part = .{ .kind = .wire_straight, .orientation = .rot0 }, .pos = .{ .x = 1.0, .y = y, .z = 0.0 } };
+        self.parts[6] = .{ .part = .{ .kind = .cell, .orientation = .rot0 }, .pos = .{ .x = 1.0, .y = y, .z = 2.0 } };
+        self.parts[7] = .{ .part = .{ .kind = .led, .orientation = .rot270 }, .pos = .{ .x = 2.0, .y = y, .z = 1.0 } };
+        self.updateCircuit();
     }
 };
