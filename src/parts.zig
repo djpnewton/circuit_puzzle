@@ -114,19 +114,25 @@ fn drawAnodeCathode(
     rl.drawCylinderEx(a_br, a_apex, line_r, line_r, 6, rl.Color.white); // right leg
     rl.drawCylinderEx(a_cl, a_cr, line_r, line_r, 6, rl.Color.white); // crossbar
 
-    // --- 'C' (Cathode) at the negative end ---
+    // --- 'K' (Cathode) at the negative end ---
     const cc = rl.Vector3{
         .x = pos.x - d.x * term_offset + n.x * north_offset_mag,
         .y = cy,
         .z = pos.z - d.z * term_offset + n.z * north_offset_mag,
     };
-    const c_spine_top = rl.Vector3{ .x = cc.x + n.x * sym + d.x * sym * 0.4, .y = cy, .z = cc.z + n.z * sym + d.z * sym * 0.4 };
-    const c_spine_bot = rl.Vector3{ .x = cc.x - n.x * sym + d.x * sym * 0.4, .y = cy, .z = cc.z - n.z * sym + d.z * sym * 0.4 };
-    const c_top_r = rl.Vector3{ .x = cc.x + n.x * sym - d.x * sym * 0.4, .y = cy, .z = cc.z + n.z * sym - d.z * sym * 0.4 };
-    const c_bot_r = rl.Vector3{ .x = cc.x - n.x * sym - d.x * sym * 0.4, .y = cy, .z = cc.z - n.z * sym - d.z * sym * 0.4 };
-    rl.drawCylinderEx(c_spine_bot, c_spine_top, line_r, line_r, 6, rl.Color.white); // spine
-    rl.drawCylinderEx(c_spine_top, c_top_r, line_r, line_r, 6, rl.Color.white); // top cap
-    rl.drawCylinderEx(c_spine_bot, c_bot_r, line_r, line_r, 6, rl.Color.white); // bottom cap
+    // K spine: vertical line in the north direction
+    const k_spine_top = rl.Vector3{ .x = cc.x + n.x * sym + d.x * sym * 0.3, .y = cy, .z = cc.z + n.z * sym + d.z * sym * 0.3 };
+    const k_spine_bot = rl.Vector3{ .x = cc.x - n.x * sym + d.x * sym * 0.3, .y = cy, .z = cc.z - n.z * sym + d.z * sym * 0.3 };
+    const k_spine_mid = rl.Vector3{ .x = cc.x + d.x * sym * 0.3, .y = cy, .z = cc.z + d.z * sym * 0.3 };
+    // K arms: diagonals going outward from spine center
+    const k_top_r = rl.Vector3{ .x = cc.x + n.x * sym - d.x * sym * 0.6, .y = cy, .z = cc.z + n.z * sym - d.z * sym * 0.6 };
+    const k_bot_r = rl.Vector3{ .x = cc.x - n.x * sym - d.x * sym * 0.6, .y = cy, .z = cc.z - n.z * sym - d.z * sym * 0.6 };
+    // Vertical spine
+    rl.drawCylinderEx(k_spine_bot, k_spine_top, line_r, line_r, 6, rl.Color.white);
+    // Upper right diagonal (from mid to upper-right)
+    rl.drawCylinderEx(k_spine_mid, k_top_r, line_r, line_r, 6, rl.Color.white);
+    // Lower right diagonal (from mid to lower-right)
+    rl.drawCylinderEx(k_spine_mid, k_bot_r, line_r, line_r, 6, rl.Color.white);
 }
 
 /// Y-axis rotation in 90° CW steps (viewed from above).

@@ -29,6 +29,8 @@ pub fn main(_: std.process.Init) !void {
     var camera_drag_active: bool = false;
     // Index of the currently selected part (persists after releasing a drag).
     var selected_part: ?usize = null;
+    // Whether the part-info modal is currently visible.
+    var show_info_modal: bool = false;
 
     while (!rl.windowShouldClose()) {
         input.update();
@@ -46,66 +48,71 @@ pub fn main(_: std.process.Init) !void {
             },
         };
 
-        // --- rotate button -------------------------------------------------------
-        const btn = ui.RotateButton{
-            .center = .{
-                .x = 60.0,
-                .y = @as(f32, @floatFromInt(rl.getScreenHeight())) - 60.0,
-            },
-            .radius = 28.0,
-        };
-        var rotate_btn_clicked = false;
-        if (selected_part) |idx| {
-            if (btn.update()) {
-                rotate_btn_clicked = true;
-                m.parts[idx].part.rotateCW();
-                m.updateCircuit();
-            }
-        }
+        // --- buttons & part interaction -------------------------------------------
+        const btn_y = @as(f32, @floatFromInt(rl.getScreenHeight())) - 60.0;
+        const info_btn = ui.InfoButton{ .center = .{ .x = 60.0, .y = btn_y }, .radius = 28.0 };
+        const rotate_btn = ui.RotateButton{ .center = .{ .x = 128.0, .y = btn_y }, .radius = 28.0 };
 
-        // --- part interaction -------------------------------------------
-        // While a part is grabbed (or being grabbed) the left button drives
-        // the move, so camera rotation is suppressed.
         var hovered_part: ?usize = null;
         var target_block: ?rl.Vector3 = null;
+        var ui_btn_clicked = false;
         var suppress_rotate = false;
 
-        // Release clears both gesture states.
-        if (input.isPointerReleased()) {
-            camera_drag_active = false;
-        }
-
-        if (dragging) |idx| {
+        if (show_info_modal) {
+            if (ui.InfoModal.update()) show_info_modal = false;
             suppress_rotate = true;
-            target_block = m.world.raycast(ray);
+        } else {
+            // Release clears both gesture states.
             if (input.isPointerReleased()) {
-                if (target_block) |bc| {
-                    const candidate = rl.Vector3{
-                        .x = bc.x,
-                        .y = bc.y + world.BLOCK_SIZE * 0.5,
-                        .z = bc.z,
-                    };
-                    if (!m.isOccupied(idx, candidate)) {
-                        m.parts[idx].pos = candidate;
+                camera_drag_active = false;
+            }
+
+            if (selected_part) |idx| {
+                if (info_btn.update()) {
+                    ui_btn_clicked = true;
+                    show_info_modal = true;
+                } else if (rotate_btn.update()) {
+                    ui_btn_clicked = true;
+                    m.parts[idx].part.rotateCW();
+                    m.updateCircuit();
+                }
+            }
+
+            // --- part interaction ------------------------------------------
+            // While a part is grabbed the left button drives the move,
+            // so camera rotation is suppressed.
+            if (dragging) |idx| {
+                suppress_rotate = true;
+                target_block = m.world.raycast(ray);
+                if (input.isPointerReleased()) {
+                    if (target_block) |bc| {
+                        const candidate = rl.Vector3{
+                            .x = bc.x,
+                            .y = bc.y + world.BLOCK_SIZE * 0.5,
+                            .z = bc.z,
+                        };
+                        if (!m.isOccupied(idx, candidate)) {
+                            m.parts[idx].pos = candidate;
+                        }
                     }
+                    dragging = null;
                 }
-                dragging = null;
-            }
-        } else if (!camera_drag_active and !rotate_btn_clicked) {
-            // Only raycast parts when we're not already in a camera gesture or UI interaction.
-            hovered_part = m.raycastPart(ray);
-            if (hovered_part != null) {
-                suppress_rotate = input.isPointerDown();
-                if (input.isPointerPressed()) {
-                    dragging = hovered_part;
-                    selected_part = hovered_part;
+            } else if (!camera_drag_active and !ui_btn_clicked) {
+                // Only raycast parts when not in a camera gesture or UI click.
+                hovered_part = m.raycastPart(ray);
+                if (hovered_part != null) {
+                    suppress_rotate = input.isPointerDown();
+                    if (input.isPointerPressed()) {
+                        dragging = hovered_part;
+                        selected_part = hovered_part;
+                    }
+                } else if (input.isPointerPressed()) {
+                    // Press on empty space - lock into camera mode for this gesture.
+                    camera_drag_active = true;
+                    selected_part = null;
                 }
-            } else if (input.isPointerPressed()) {
-                // Press on empty space - lock into camera mode for this gesture.
-                camera_drag_active = true;
-                selected_part = null;
             }
-        }
+        } // end !show_info_modal
 
         cam.update(!suppress_rotate);
 
@@ -147,7 +154,13 @@ pub fn main(_: std.process.Init) !void {
 
         // --- 2D UI -------------------------------------------------------
         if (selected_part != null) {
-            btn.draw();
+            info_btn.draw();
+            rotate_btn.draw();
+        }
+        if (show_info_modal) {
+            if (selected_part) |idx| {
+                ui.InfoModal.draw(m.parts[idx].part.kind);
+            }
         }
     }
 }
