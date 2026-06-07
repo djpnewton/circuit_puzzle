@@ -128,8 +128,12 @@ pub fn simulate(
         // Don't propagate through any battery's internals.
         if (part_arr[nb].kind == .cell) continue;
 
-        // Track LED visitation (will be cleared if circuit is not closed).
-        if (part_arr[nb].kind == .led) powered[nb] = true;
+        // LEDs are diodes: current must enter the anode (port[0]).
+        // Reverse-biased: block current and leave unpowered.
+        if (part_arr[nb].kind == .led) {
+            if (arr_dir != nb_ports[0]) continue;
+            powered[nb] = true;
+        }
 
         // Propagate: exit through the other port.
         for (nb_ports) |port_dir| {

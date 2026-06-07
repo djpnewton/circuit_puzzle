@@ -8,6 +8,127 @@ pub const PartType = enum {
     led,
 };
 
+pub const TerminalLabelType = enum {
+    plus_minus,
+    anode_cathode,
+};
+
+pub const TerminalLabel = struct {
+    label_type: TerminalLabelType,
+    pos: rl.Vector3,
+    direction: @TypeOf(rotDir(1, 0, .rot0)),
+    north: @TypeOf(rotDir(0, 1, .rot0)),
+    block_size: f32,
+
+    pub fn draw(self: *const TerminalLabel) void {
+        switch (self.label_type) {
+            .plus_minus => drawPlusMinus(self.pos, self.direction, self.north, self.block_size),
+            .anode_cathode => drawAnodeCathode(self.pos, self.direction, self.north, self.block_size),
+        }
+    }
+};
+
+/// Draw +/- terminal labels on the base platform.
+fn drawPlusMinus(
+    pos: rl.Vector3,
+    direction: @TypeOf(rotDir(1, 0, .rot0)),
+    north: @TypeOf(rotDir(0, 1, .rot0)),
+    block_size: f32,
+) void {
+    const cy = platformTop(pos) + 0.01;
+    const term_offset = block_size * 0.3;
+    const north_offset_mag = block_size * 0.3;
+    const sym = block_size * 0.07;
+    const line_r = block_size * 0.012;
+
+    const d = direction;
+    const n = north;
+
+    // Positive terminal (+): two crossing lines
+    const pc = rl.Vector3{
+        .x = pos.x + d.x * term_offset + n.x * north_offset_mag,
+        .y = cy,
+        .z = pos.z + d.z * term_offset + n.z * north_offset_mag,
+    };
+    rl.drawCylinderEx(
+        .{ .x = pc.x - d.x * sym, .y = cy, .z = pc.z - d.z * sym },
+        .{ .x = pc.x + d.x * sym, .y = cy, .z = pc.z + d.z * sym },
+        line_r,
+        line_r,
+        6,
+        rl.Color.white,
+    );
+    rl.drawCylinderEx(
+        .{ .x = pc.x - n.x * sym, .y = cy, .z = pc.z - n.z * sym },
+        .{ .x = pc.x + n.x * sym, .y = cy, .z = pc.z + n.z * sym },
+        line_r,
+        line_r,
+        6,
+        rl.Color.white,
+    );
+
+    // Negative terminal (−): single line along direction axis
+    const nc = rl.Vector3{
+        .x = pos.x - d.x * term_offset + n.x * north_offset_mag,
+        .y = cy,
+        .z = pos.z - d.z * term_offset + n.z * north_offset_mag,
+    };
+    rl.drawCylinderEx(
+        .{ .x = nc.x - d.x * sym, .y = cy, .z = nc.z - d.z * sym },
+        .{ .x = nc.x + d.x * sym, .y = cy, .z = nc.z + d.z * sym },
+        line_r,
+        line_r,
+        6,
+        rl.Color.white,
+    );
+}
+
+/// Draw A/C terminal labels (Anode/Cathode) on the base platform.
+fn drawAnodeCathode(
+    pos: rl.Vector3,
+    direction: @TypeOf(rotDir(1, 0, .rot0)),
+    north: @TypeOf(rotDir(0, 1, .rot0)),
+    block_size: f32,
+) void {
+    const cy = platformTop(pos) + 0.01;
+    const term_offset = block_size * 0.3;
+    const north_offset_mag = block_size * 0.3;
+    const sym = block_size * 0.08; // half-extent of each symbol
+    const line_r = block_size * 0.012; // line radius
+
+    const d = direction;
+    const n = north;
+
+    // --- 'A' (Anode) at the positive end ---
+    const ac = rl.Vector3{
+        .x = pos.x + d.x * term_offset + n.x * north_offset_mag,
+        .y = cy,
+        .z = pos.z + d.z * term_offset + n.z * north_offset_mag,
+    };
+    const a_apex = rl.Vector3{ .x = ac.x + n.x * sym, .y = cy, .z = ac.z + n.z * sym };
+    const a_bl = rl.Vector3{ .x = ac.x - n.x * sym - d.x * sym * 0.7, .y = cy, .z = ac.z - n.z * sym - d.z * sym * 0.7 };
+    const a_br = rl.Vector3{ .x = ac.x - n.x * sym + d.x * sym * 0.7, .y = cy, .z = ac.z - n.z * sym + d.z * sym * 0.7 };
+    const a_cl = rl.Vector3{ .x = ac.x - d.x * sym * 0.45, .y = cy, .z = ac.z - d.z * sym * 0.45 };
+    const a_cr = rl.Vector3{ .x = ac.x + d.x * sym * 0.45, .y = cy, .z = ac.z + d.z * sym * 0.45 };
+    rl.drawCylinderEx(a_bl, a_apex, line_r, line_r, 6, rl.Color.white); // left leg
+    rl.drawCylinderEx(a_br, a_apex, line_r, line_r, 6, rl.Color.white); // right leg
+    rl.drawCylinderEx(a_cl, a_cr, line_r, line_r, 6, rl.Color.white); // crossbar
+
+    // --- 'C' (Cathode) at the negative end ---
+    const cc = rl.Vector3{
+        .x = pos.x - d.x * term_offset + n.x * north_offset_mag,
+        .y = cy,
+        .z = pos.z - d.z * term_offset + n.z * north_offset_mag,
+    };
+    const c_spine_top = rl.Vector3{ .x = cc.x + n.x * sym + d.x * sym * 0.4, .y = cy, .z = cc.z + n.z * sym + d.z * sym * 0.4 };
+    const c_spine_bot = rl.Vector3{ .x = cc.x - n.x * sym + d.x * sym * 0.4, .y = cy, .z = cc.z - n.z * sym + d.z * sym * 0.4 };
+    const c_top_r = rl.Vector3{ .x = cc.x + n.x * sym - d.x * sym * 0.4, .y = cy, .z = cc.z + n.z * sym - d.z * sym * 0.4 };
+    const c_bot_r = rl.Vector3{ .x = cc.x - n.x * sym - d.x * sym * 0.4, .y = cy, .z = cc.z - n.z * sym - d.z * sym * 0.4 };
+    rl.drawCylinderEx(c_spine_bot, c_spine_top, line_r, line_r, 6, rl.Color.white); // spine
+    rl.drawCylinderEx(c_spine_top, c_top_r, line_r, line_r, 6, rl.Color.white); // top cap
+    rl.drawCylinderEx(c_spine_bot, c_bot_r, line_r, line_r, 6, rl.Color.white); // bottom cap
+}
+
 /// Y-axis rotation in 90° CW steps (viewed from above).
 pub const Orientation = enum(u2) {
     rot0,
@@ -175,6 +296,17 @@ fn drawCell(pos: rl.Vector3, o: Orientation) void {
     rl.drawCylinderEx(pos_, nub, radius * 0.45, radius * 0.45, 12, metal_color);
     // Negative terminal flat cap
     rl.drawCylinderEx(cap, neg, radius * 1.02, radius * 1.02, 20, metal_color);
+
+    // Draw terminal labels on the base platform
+    const d_perp = rotDir(0, 1, o);
+    const label = TerminalLabel{
+        .label_type = .plus_minus,
+        .pos = pos,
+        .direction = d,
+        .north = d_perp,
+        .block_size = s,
+    };
+    label.draw();
 }
 
 fn drawWireStraight(pos: rl.Vector3, o: Orientation) void {
@@ -309,6 +441,17 @@ fn drawLed(pos: rl.Vector3, o: Orientation, powered: bool) void {
             rl.Color.init(255, 240, 130, 40),
         );
     }
+
+    // Terminal labels on the base platform
+    const d_perp = rotDir(0, 1, o);
+    const label = TerminalLabel{
+        .label_type = .anode_cathode,
+        .pos = pos,
+        .direction = d,
+        .north = d_perp,
+        .block_size = s,
+    };
+    label.draw();
 }
 
 pub fn name(self: PartType) [:0]const u8 {
