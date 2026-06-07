@@ -7,6 +7,7 @@ const camera = @import("camera.zig");
 const gizmos = @import("gizmos.zig");
 const world = @import("world.zig");
 const input = @import("input.zig");
+const ui = @import("ui.zig");
 
 pub fn main(_: std.process.Init) !void {
     rl.setConfigFlags(rl.ConfigFlags{ .window_resizable = true, .msaa_4x_hint = true });
@@ -26,6 +27,8 @@ pub fn main(_: std.process.Init) !void {
     // True when the current pointer-down began on empty space (camera gesture).
     // While set, part picking is suppressed so rotate/scroll can't grab parts.
     var camera_drag_active: bool = false;
+    // Index of the currently selected part (persists after releasing a drag).
+    var selected_part: ?usize = null;
 
     while (!rl.windowShouldClose()) {
         input.update();
@@ -42,6 +45,23 @@ pub fn main(_: std.process.Init) !void {
                 .z = if (@abs(raw_ray.direction.z) < eps) eps else raw_ray.direction.z,
             },
         };
+
+        // --- rotate button -------------------------------------------------------
+        const btn = ui.RotateButton{
+            .center = .{
+                .x = 60.0,
+                .y = @as(f32, @floatFromInt(rl.getScreenHeight())) - 60.0,
+            },
+            .radius = 28.0,
+        };
+        var rotate_btn_clicked = false;
+        if (selected_part) |idx| {
+            if (btn.update()) {
+                rotate_btn_clicked = true;
+                m.parts[idx].part.rotateCW();
+                m.updateCircuit();
+            }
+        }
 
         // --- part interaction -------------------------------------------
         // While a part is grabbed (or being grabbed) the left button drives
@@ -71,15 +91,19 @@ pub fn main(_: std.process.Init) !void {
                 }
                 dragging = null;
             }
-        } else if (!camera_drag_active) {
-            // Only raycast parts when we're not already in a camera gesture.
+        } else if (!camera_drag_active and !rotate_btn_clicked) {
+            // Only raycast parts when we're not already in a camera gesture or UI interaction.
             hovered_part = m.raycastPart(ray);
             if (hovered_part != null) {
                 suppress_rotate = input.isPointerDown();
-                if (input.isPointerPressed()) dragging = hovered_part;
+                if (input.isPointerPressed()) {
+                    dragging = hovered_part;
+                    selected_part = hovered_part;
+                }
             } else if (input.isPointerPressed()) {
                 // Press on empty space - lock into camera mode for this gesture.
                 camera_drag_active = true;
+                selected_part = null;
             }
         }
 
@@ -98,6 +122,10 @@ pub fn main(_: std.process.Init) !void {
             rl.beginMode3D(cam.rl_cam);
             defer rl.endMode3D();
             m.draw(cam.rl_cam.position);
+            // Persistent selection outline
+            if (selected_part) |idx| {
+                gizmos.drawSelectedHighlight(m.parts[idx].pos);
+            }
             if (dragging) |idx| {
                 gizmos.drawPartHighlight(m.parts[idx].pos);
                 if (target_block) |bc| {
@@ -115,6 +143,11 @@ pub fn main(_: std.process.Init) !void {
             } else if (hovered_part) |idx| {
                 gizmos.drawPartHighlight(m.parts[idx].pos);
             }
+        }
+
+        // --- 2D UI -------------------------------------------------------
+        if (selected_part != null) {
+            btn.draw();
         }
     }
 }

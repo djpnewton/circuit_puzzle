@@ -77,10 +77,19 @@ pub const Part = struct {
     pub fn draw(self: *const Part, pos: rl.Vector3, powered: bool) void {
         drawPart(self.kind, self.orientation, pos, powered);
     }
+
+    pub fn rotateCW(self: *Part) void {
+        self.orientation = switch (self.orientation) {
+            .rot0 => .rot90,
+            .rot90 => .rot180,
+            .rot180 => .rot270,
+            .rot270 => .rot0,
+        };
+    }
 };
 
 /// Rotate (dx, dz) by `o` steps of 90° CW (looking down the +Y axis).
-/// CW 90°: (x, z) → (z, -x)
+/// CW 90°: (x, z) -> (z, -x)
 fn rotDir(dx: f32, dz: f32, o: Orientation) struct { x: f32, z: f32 } {
     return switch (o) {
         .rot0 => .{ .x = dx, .z = dz },

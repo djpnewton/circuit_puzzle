@@ -12,6 +12,15 @@ pub fn drawPartHighlight(pos: rl.Vector3) void {
     rl.drawCubeWires(center, s * 1.02, s * 1.02, s * 1.02, col);
 }
 
+/// Persistent selection outline.
+/// Slightly larger and white so it peeks outside the yellow hover highlight.
+pub fn drawSelectedHighlight(pos: rl.Vector3) void {
+    const s = world.BLOCK_SIZE;
+    const center = rl.Vector3{ .x = pos.x, .y = pos.y + s * 0.5, .z = pos.z };
+    const col = rl.Color.init(220, 240, 255, 255);
+    rl.drawCubeWires(center, s * 1.07, s * 1.07, s * 1.07, col);
+}
+
 /// Same as drawPlacementTarget but tinted red to indicate an occupied cell.
 pub fn drawPlacementTargetBlocked(block_center: rl.Vector3) void {
     const s = world.BLOCK_SIZE;
@@ -29,4 +38,3 @@ pub fn drawPlacementTarget(block_center: rl.Vector3) void {
     const col = rl.Color.init(120, 230, 120, 255);
     rl.drawCubeWires(center, s * 1.02, s * 1.02, s * 1.02, col);
 }
-

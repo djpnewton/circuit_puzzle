@@ -120,7 +120,7 @@ pub fn simulate(
         if (visited[vk]) continue;
         visited[vk] = true;
 
-        // Did we reach the battery's − terminal? → circuit is closed.
+        // Did we reach the battery's − terminal? then circuit is closed.
         if (nb == b and arr_dir == batt_minus) {
             circuit_closed = true;
             continue; // don't propagate through the battery
