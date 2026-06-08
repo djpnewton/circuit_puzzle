@@ -1,3 +1,4 @@
+const std = @import("std");
 const world = @import("world.zig");
 const rl = @import("raylib");
 
@@ -7,6 +8,23 @@ pub const PartType = enum {
     wire_corner,
     led,
 };
+
+/// Cache for the LED model (loaded once, reused for all LEDs)
+var led_model_cache: ?rl.Model = null;
+
+pub fn initModels() void {
+    if (led_model_cache == null) {
+        const model_path = "resources/models/LED/led_top.obj";
+        led_model_cache = rl.loadModel(model_path) catch null;
+    }
+}
+
+pub fn deinitModels() void {
+    if (led_model_cache) |model| {
+        rl.unloadModel(model);
+    }
+    led_model_cache = null;
+}
 
 pub const TerminalLabelType = enum {
     plus_minus,
@@ -366,24 +384,18 @@ fn drawWireCorner(pos: rl.Vector3, o: Orientation) void {
 fn drawLed(pos: rl.Vector3, o: Orientation, powered: bool) void {
     const s = world.BLOCK_SIZE;
     const lead_color = rl.Color.init(190, 190, 195, 255);
-    const die_color = partColor(.led);
-    const epoxy_color = if (powered)
-        rl.Color.init(255, 80, 80, 220)
-    else
-        rl.Color.init(255, 120, 120, 110);
 
     const top = platformTop(pos);
-    const body_radius = s * 0.13;
     const body_bottom_y = top + s * 0.16;
     const body_top_y = top + s * 0.5;
     const lead_radius = s * 0.018;
-    const post_radius = s * 0.025;
     const lead_off = s * 0.05; // offset from center to each lead
     const bend_y = top + s * 0.02;
     const edge = s * 0.42;
 
     // Canonical: +X is the anode direction; rotated by orientation.
     const d = rotDir(1, 0, o);
+    const d_perp = rotDir(0, 1, o);
     const cathode_base = rl.Vector3{ .x = pos.x - d.x * lead_off, .y = body_bottom_y, .z = pos.z - d.z * lead_off };
     const cathode_bend = rl.Vector3{ .x = pos.x - d.x * lead_off, .y = bend_y, .z = pos.z - d.z * lead_off };
     const cathode_floor = rl.Vector3{ .x = pos.x - d.x * edge, .y = bend_y, .z = pos.z - d.z * edge };
@@ -397,39 +409,29 @@ fn drawLed(pos: rl.Vector3, o: Orientation, powered: bool) void {
     rl.drawCylinderEx(anode_base, anode_bend, lead_radius, lead_radius, 8, lead_color);
     rl.drawCylinderEx(anode_bend, anode_floor, lead_radius, lead_radius, 8, lead_color);
 
-    // --- Internal posts ---
-    const anvil_top_y = body_bottom_y + s * 0.14;
-    const anode_top_y = body_bottom_y + s * 0.26;
-    const anvil_bot = rl.Vector3{ .x = cathode_base.x, .y = body_bottom_y, .z = cathode_base.z };
-    const anvil_top = rl.Vector3{ .x = cathode_base.x, .y = anvil_top_y, .z = cathode_base.z };
-    const apost_bot = rl.Vector3{ .x = anode_base.x, .y = body_bottom_y, .z = anode_base.z };
-    const apost_top = rl.Vector3{ .x = anode_base.x, .y = anode_top_y, .z = anode_base.z };
-    rl.drawCylinderEx(anvil_bot, anvil_top, post_radius, post_radius * 1.3, 8, lead_color);
-    rl.drawCylinderEx(apost_bot, apost_top, post_radius, post_radius, 8, lead_color);
+    // --- Draw LED body from OBJ model ---
+    if (led_model_cache) |model| {
+        // Scale: model is 2 units tall (y: -1 to 1), we want it 0.34*s tall
+        const model_scale = 0.17 * s;
 
-    // Die sitting in the anvil cup.
-    rl.drawCube(.{ .x = anvil_top.x, .y = anvil_top_y + s * 0.01, .z = anvil_top.z }, s * 0.03, s * 0.03, s * 0.03, die_color);
+        // Position: center the model at the LED position, at the bottom height
+        const model_pos = rl.Vector3{
+            .x = pos.x,
+            .y = body_bottom_y + model_scale,
+            .z = pos.z,
+        };
 
-    // Bond wire from die to anode post.
-    rl.drawCylinderEx(
-        .{ .x = anvil_top.x, .y = anvil_top_y + s * 0.02, .z = anvil_top.z },
-        .{ .x = apost_top.x, .y = anode_top_y, .z = apost_top.z },
-        s * 0.006,
-        s * 0.006,
-        6,
-        lead_color,
-    );
+        // Convert orientation to rotation angle (degrees around Y axis)
+        const rotation_angle: f32 = switch (o) {
+            .rot0 => 180,
+            .rot90 => 270,
+            .rot180 => 0.0,
+            .rot270 => 90.0,
+        };
 
-    // --- Translucent epoxy shell (last, so internals show through) ---
-    rl.drawCylinderEx(
-        .{ .x = pos.x, .y = body_bottom_y, .z = pos.z },
-        .{ .x = pos.x, .y = body_top_y, .z = pos.z },
-        body_radius,
-        body_radius,
-        16,
-        epoxy_color,
-    );
-    rl.drawSphere(.{ .x = pos.x, .y = body_top_y, .z = pos.z }, body_radius, epoxy_color);
+        // Draw the model with semi-transparent tint to show internal details
+        rl.drawModelEx(model, model_pos, .{ .x = 0, .y = 1, .z = 0 }, rotation_angle, .{ .x = model_scale, .y = model_scale, .z = model_scale }, rl.Color.init(255, 255, 255, 180));
+    }
 
     // --- Glow when powered ---
     if (powered) {
@@ -449,7 +451,6 @@ fn drawLed(pos: rl.Vector3, o: Orientation, powered: bool) void {
     }
 
     // Terminal labels on the base platform
-    const d_perp = rotDir(0, 1, o);
     const label = TerminalLabel{
         .label_type = .anode_cathode,
         .pos = pos,

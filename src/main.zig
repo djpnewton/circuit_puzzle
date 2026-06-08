@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const rl = @import("raylib");
 
 const map = @import("map.zig");
+const parts = @import("parts.zig");
 const camera = @import("camera.zig");
 const gizmos = @import("gizmos.zig");
 const world = @import("world.zig");
@@ -14,6 +15,9 @@ pub fn main(_: std.process.Init) !void {
     rl.setConfigFlags(rl.ConfigFlags{ .window_resizable = true, .msaa_4x_hint = true });
     rl.initWindow(1280, 720, "circuit puzzle");
     defer rl.closeWindow();
+
+    parts.initModels();
+    defer parts.deinitModels();
 
     var m = try map.Map.init();
     defer m.deinit();
