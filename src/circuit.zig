@@ -5,19 +5,11 @@
 ///   - Each part exposes two connection ports (directions in world space).
 ///   - Two adjacent parts are electrically connected when each faces the
 ///     other with a matching port.
-///   - Wires and LEDs are conductors: current entering one port exits the
-///     other.
-///   - The battery (cell) is a source: no internal connection.  BFS starts
-///     at the battery's + port and, if it reaches the battery's − port, the
+///   - Wires and LEDs are conductors: current entering one port exits the other.
+///   - The battery (cell) is a source: no internal connection. BFS starts at
+///     the battery's + port and, if it reaches the battery's − port, the
 ///     circuit is closed.
-///   - Every LED whose ports are traversed in a closed circuit is marked
-///     powered.
-///
-/// Call `simulate` after any part is moved.  It writes `true` into
-/// `powered[i]` for every powered LED at index i; all other entries are
-/// set to `false`.
-const rl = @import("raylib");
-const world = @import("world.zig");
+///   - Every LED whose ports are traversed in a closed circuit is marked powered.
 const parts = @import("parts.zig");
 
 /// Maximum number of parts the map may hold (must match map.zig).
@@ -36,10 +28,10 @@ pub const ComponentStats = struct {
 
 const GPos = struct { x: i32, z: i32 };
 
-fn toGrid(pos: rl.Vector3) GPos {
+fn toGrid(pos: parts.Vec3) GPos {
     return .{
-        .x = @intFromFloat(@round(pos.x / world.BLOCK_SIZE)),
-        .z = @intFromFloat(@round(pos.z / world.BLOCK_SIZE)),
+        .x = @intFromFloat(@round(pos.x)),
+        .z = @intFromFloat(@round(pos.z)),
     };
 }
 
@@ -63,7 +55,7 @@ const ExitNode = struct { idx: u8, exit: parts.Dir, voltage: f32 };
 ///               part i is an LED that receives current in a closed loop.
 pub fn simulate(
     part_arr: []const parts.Part,
-    pos_arr: []const rl.Vector3,
+    pos_arr: []const parts.Vec3,
     powered: []bool,
     stats: []ComponentStats,
 ) void {

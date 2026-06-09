@@ -1,0 +1,16 @@
+[configuration]
+
+compatibility_minimum = "4.4.0"
+entry_symbol = "circuit_puzzle_init"
+reloadable = true
+
+[libraries]
+
+linux.debug.x86_64 = "lib/libcircuit_puzzle.so"
+linux.release.x86_64 = "lib/libcircuit_puzzle.so"
+linux.debug.arm64 = "lib/libcircuit_puzzle.so"
+linux.release.arm64 = "lib/libcircuit_puzzle.so"
+windows.debug.x86_64 = "lib/circuit_puzzle.dll"
+windows.release.x86_64 = "lib/circuit_puzzle.dll"
+macos.debug = "lib/libcircuit_puzzle.dylib"
+macos.release = "lib/libcircuit_puzzle.dylib"

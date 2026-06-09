@@ -2,3 +2,5 @@
 zig-out
 zig-pkg
 *.pyc
+project/.godot/shader_cache/
+project/.godot/editor/
