@@ -2,11 +2,15 @@
 
 [ext_resource type="PackedScene" uid="uid://bfccm0s675nei" path="res://resources/models/LED/led_top.glb" id="1_o5qli"]
 [ext_resource type="Script" path="res://scenes/ui_controller.gd" id="2_ui"]
+[ext_resource type="Script" path="res://scenes/board_renderer.gd" id="3_renderer"]
 
 [node name="Main" type="GameNode" unique_id=220185745]
 
 [node name="UIController" type="Node" parent="."]
 script = ExtResource("2_ui")
+
+[node name="BoardRenderer" type="Node3D" parent="."]
+script = ExtResource("3_renderer")
 
 [node name="led_top" parent="." unique_id=538367749 instance=ExtResource("1_o5qli")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.0186048, 0, -0.48960495)
