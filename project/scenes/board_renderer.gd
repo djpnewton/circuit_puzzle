@@ -427,6 +427,7 @@ func _build_led_visuals(root: Node3D, _idx: int, top_y: float, powered: bool) ->
 	part_visuals[_idx].append(body)
 
 	# A (Anode) and K (Cathode) labels on the LED sides
+	# A on +X (maps to port[0] after rotation), K on -X (maps to port[1])
 	part_visuals[_idx].append(
 		_make_label("A", root, Vector3(s * 0.27, top_y + s * 0.28, 0.0), Vector3(0.0, PI / 2.0, 0.0))
 	)

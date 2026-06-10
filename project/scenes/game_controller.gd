@@ -353,9 +353,9 @@ func _update_led_model() -> void:
 			var p := part_positions[i]
 			var top := p.y + BLOCK_SIZE * 0.12
 
-			# Position led_top GLB model
+			# Position led_top GLB model (spun 180° to align with circuit direction)
 			if is_instance_valid(led_model_root):
-				var angle := float(part_orients[i]) * PI * 0.5
+				var angle := float(part_orients[i]) * PI * 0.5 + PI
 				var basis := Basis(Vector3.UP, angle)
 				var s: float = 0.3
 				basis = basis.scaled(Vector3(s, s, s))
