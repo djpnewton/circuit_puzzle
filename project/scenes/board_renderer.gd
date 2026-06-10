@@ -128,10 +128,11 @@ func _read_state() -> void:
 
 # -- Terrain building ------------------------------------------------------
 
-func _make_material(albedo: Color) -> StandardMaterial3D:
+func _make_material(albedo: Color, metallic: float = 0.0, roughness: float = 0.8) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = albedo
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.metallic = metallic
+	mat.roughness = roughness
 	return mat
 
 
@@ -157,8 +158,7 @@ func _build_terrain() -> void:
 			mesh.size = Vector3(block_size, block_size, block_size)
 
 			var v := _terrain_variant(xi, zi)
-			var mat := _make_material(v["top"])
-			mesh.material = mat
+			mesh.material = _make_material(v["top"], 0.0, 0.9)
 
 			mi.mesh = mesh
 			mi.position = Vector3(
@@ -240,61 +240,87 @@ func _platform_top(pos: Vector3) -> float:
 
 func _make_platform_mesh(top_y: float) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
 	var s := block_size
-	var thickness := s * 0.12
-	mesh.size = Vector3(s * 0.95, thickness, s * 0.95)
+	var thickness := s * 0.1
+	var r := s * 0.44
 
-	var mat := _make_material(PLATFORM_CLR)
-	mesh.material = mat
-
-	mi.mesh = mesh
+	# Round base plate with beveled edges
+	var base_mesh := CylinderMesh.new()
+	base_mesh.top_radius = r
+	base_mesh.bottom_radius = r
+	base_mesh.height = thickness
+	base_mesh.material = _make_material(PLATFORM_CLR, 0.15, 0.55)
+	mi.mesh = base_mesh
 	mi.position = Vector3(0.0, top_y - thickness * 0.5, 0.0)
+
+	# Thin accent ring on top
+	var ring_mi := MeshInstance3D.new()
+	var ring_mesh := CylinderMesh.new()
+	ring_mesh.top_radius = r - s * 0.025
+	ring_mesh.bottom_radius = r
+	ring_mesh.height = thickness * 0.15
+	ring_mesh.material = _make_material(Color(0.35, 0.37, 0.42, 1.0), 0.3, 0.4)
+	ring_mi.mesh = ring_mesh
+	ring_mi.position = Vector3(0.0, top_y - thickness * 0.5 + thickness * 0.4, 0.0)
+	mi.add_child(ring_mi)
+
 	return mi
 
 
 # -- Part type builders ----------------------------------------------------
 
-func _make_cylinder_mesh(radius: float, height: float, color: Color) -> CylinderMesh:
+func _make_cylinder_mesh(radius: float, height: float, color: Color, metallic: float = 0.0, roughness: float = 0.8) -> CylinderMesh:
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = radius
 	mesh.bottom_radius = radius
 	mesh.height = height
-	var mat := _make_material(color)
-	mesh.material = mat
+	mesh.material = _make_material(color, metallic, roughness)
 	return mesh
 
 
-func _make_box_mesh(size: Vector3, color: Color) -> BoxMesh:
+func _make_box_mesh(size: Vector3, color: Color, metallic: float = 0.0, roughness: float = 0.8) -> BoxMesh:
 	var mesh := BoxMesh.new()
 	mesh.size = size
-	var mat := _make_material(color)
-	mesh.material = mat
+	mesh.material = _make_material(color, metallic, roughness)
 	return mesh
 
 
-func _make_label(text: String, parent: Node3D, local_pos: Vector3, font_size: int = 48) -> Label3D:
-	var label := Label3D.new()
+func _make_label(text: String, parent: Node3D, local_pos: Vector3, rot: Vector3 = Vector3(0.0, PI, 0.0), font_size: int = 64) -> Sprite3D:
+	# Create a sub-viewport to render text into a texture
+	var vp := SubViewport.new()
+	vp.size = Vector2i(64, 64)
+	vp.transparent_bg = true
+	vp.handle_input_locally = false
+	vp.disable_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+
+	# Label control inside the viewport
+	var label := Label.new()
 	label.text = text
-	label.font_size = font_size
-	label.modulate = Color(1.0, 1.0, 1.0, 0.9)
-	label.pixel_size = 0.005
-	label.outline_modulate = Color(0.0, 0.0, 0.0, 0.8)
-	label.outline_size = 4
-	label.position = local_pos
-	# Rotate to lie flat on the base plate
-	label.rotation = Vector3(-PI / 2.0, 0.0, 0.0)
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0))
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 1.0))
+	label.add_theme_constant_override("outline_size", 6)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vp.add_child(label)
 
-	# Assign a font so it renders when created via code
-	var theme := ThemeDB.get_project_theme()
-	if theme and theme.default_font:
-		label.font = theme.default_font
+	# Sprite that displays the rendered text (flat on the side of the model)
+	var sprite := Sprite3D.new()
+	sprite.texture = vp.get_texture()
+	sprite.centered = true
+	sprite.position = local_pos
+	sprite.rotation = rot
+	sprite.pixel_size = 0.005
 
-	parent.add_child(label)
-	return label
+	# Reparent sub-viewport under sprite so sprite cleanup frees it too
+	sprite.add_child(vp)
+	parent.add_child(sprite)
+	return sprite
 
 
-func _add_cylinder(parent: Node3D, pos_a: Vector3, pos_b: Vector3, radius: float, color: Color) -> MeshInstance3D:
+func _add_cylinder(parent: Node3D, pos_a: Vector3, pos_b: Vector3, radius: float, color: Color, metallic: float = 0.0, roughness: float = 0.8) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var dx := pos_b.x - pos_a.x
 	var dy := pos_b.y - pos_a.y
@@ -303,7 +329,7 @@ func _add_cylinder(parent: Node3D, pos_a: Vector3, pos_b: Vector3, radius: float
 	if l < 0.001:
 		return mi  # degenerate
 
-	mi.mesh = _make_cylinder_mesh(radius, l, color)
+	mi.mesh = _make_cylinder_mesh(radius, l, color, metallic, roughness)
 
 	# Position at midpoint and rotate to align +Y with axis
 	var mid := (pos_a + pos_b) * 0.5
@@ -333,17 +359,18 @@ func _build_cell_visuals(root: Node3D, _idx: int, top_y: float) -> void:
 	var nub_end   := Vector3( s * 0.47, y, 0.0)
 	var cap_start := Vector3(-s * 0.42, y, 0.0)
 
-	part_visuals[_idx].append(_add_cylinder(root, neg_end, split_pt, r, BLACK))
-	part_visuals[_idx].append(_add_cylinder(root, split_pt, pos_end, r, COPPER))
-	part_visuals[_idx].append(_add_cylinder(root, pos_end, nub_end, r * 0.45, METAL))
-	part_visuals[_idx].append(_add_cylinder(root, cap_start, neg_end, r * 1.02, METAL))
+	part_visuals[_idx].append(_add_cylinder(root, neg_end, split_pt, r, BLACK, 0.2, 0.6))
+	part_visuals[_idx].append(_add_cylinder(root, split_pt, pos_end, r, COPPER, 0.8, 0.3))
+	part_visuals[_idx].append(_add_cylinder(root, pos_end, nub_end, r * 0.45, METAL, 0.9, 0.2))
+	part_visuals[_idx].append(_add_cylinder(root, cap_start, neg_end, r * 1.02, METAL, 0.9, 0.2))
 
-	# + and - labels on the base plate
+	# + and - labels on the sides of the battery body
+	var z_offset := s * 0.18  # battery radius
 	part_visuals[_idx].append(
-		_make_label("+", root, Vector3(s * 0.3, top_y + s * 0.02, -s * 0.3))
+		_make_label("+", root, Vector3(s * 0.35, top_y + s * 0.24, z_offset))
 	)
 	part_visuals[_idx].append(
-		_make_label("-", root, Vector3(-s * 0.3, top_y + s * 0.02, -s * 0.3))
+		_make_label("-", root, Vector3(-s * 0.35, top_y + s * 0.24, z_offset))
 	)
 
 
@@ -357,9 +384,9 @@ func _build_wire_straight_visuals(root: Node3D, _idx: int, top_y: float) -> void
 	var sr    := Vector3( s * 0.32, y, 0.0)
 	var right := Vector3( s * 0.5, y, 0.0)
 
-	part_visuals[_idx].append(_add_cylinder(root, sl, sr, r, SHEATH))
-	part_visuals[_idx].append(_add_cylinder(root, left, sl, r * 0.45, COPPER))
-	part_visuals[_idx].append(_add_cylinder(root, sr, right, r * 0.45, COPPER))
+	part_visuals[_idx].append(_add_cylinder(root, sl, sr, r, SHEATH, 0.0, 0.7))
+	part_visuals[_idx].append(_add_cylinder(root, left, sl, r * 0.45, COPPER, 0.8, 0.3))
+	part_visuals[_idx].append(_add_cylinder(root, sr, right, r * 0.45, COPPER, 0.8, 0.3))
 
 
 func _build_wire_corner_visuals(root: Node3D, _idx: int, top_y: float) -> void:
@@ -379,12 +406,12 @@ func _build_wire_corner_visuals(root: Node3D, _idx: int, top_y: float) -> void:
 		var sh_local := Vector3(dir.x * sf, dir.y, dir.z * sf)
 		var ctr := Vector3(0.0, y, 0.0)
 
-		part_visuals[_idx].append(_add_cylinder(root, ctr, sh_local, r, SHEATH))
-		part_visuals[_idx].append(_add_cylinder(root, sh_local, tip_local, r * 0.45, COPPER))
+		part_visuals[_idx].append(_add_cylinder(root, ctr, sh_local, r, SHEATH, 0.0, 0.7))
+		part_visuals[_idx].append(_add_cylinder(root, sh_local, tip_local, r * 0.45, COPPER, 0.8, 0.3))
 
 	# Corner sphere (small box approximation)
 	var sphere_mi := MeshInstance3D.new()
-	sphere_mi.mesh = _make_box_mesh(Vector3(r * 2, r * 2, r * 2), SHEATH)
+	sphere_mi.mesh = _make_box_mesh(Vector3(r * 2, r * 2, r * 2), SHEATH, 0.0, 0.7)
 	sphere_mi.position = Vector3(0.0, y, 0.0)
 	root.add_child(sphere_mi)
 	part_visuals[_idx].append(sphere_mi)
@@ -395,22 +422,26 @@ func _build_led_visuals(root: Node3D, _idx: int, top_y: float, powered: bool) ->
 	var r := s * 0.12
 	var y := top_y + r
 
-	# Simple LED body: red cylinder
-	var body := _add_cylinder(root, Vector3(-s * 0.25, y, 0.0), Vector3(s * 0.25, y, 0.0), r, Color(0.9, 0.2, 0.2, 1.0))
+	# Simple LED body: red cylinder with slight shine
+	var body := _add_cylinder(root, Vector3(-s * 0.25, y, 0.0), Vector3(s * 0.25, y, 0.0), r, Color(0.9, 0.2, 0.2, 1.0), 0.25, 0.4)
 	part_visuals[_idx].append(body)
 
-	# A (Anode) and K (Cathode) labels on the base plate
+	# A (Anode) and K (Cathode) labels on the LED sides
 	part_visuals[_idx].append(
-		_make_label("A", root, Vector3(s * 0.25, top_y + s * 0.02, -s * 0.3))
+		_make_label("A", root, Vector3(s * 0.27, top_y + s * 0.28, 0.0), Vector3(0.0, PI / 2.0, 0.0))
 	)
 	part_visuals[_idx].append(
-		_make_label("K", root, Vector3(-s * 0.25, top_y + s * 0.02, -s * 0.3))
+		_make_label("K", root, Vector3(-s * 0.27, top_y + s * 0.28, 0.0), Vector3(0.0, -PI / 2.0, 0.0))
 	)
 
-	# Glow indicator
+	# Glow indicator with emission
 	var glow_mi := MeshInstance3D.new()
 	var glow_size := s * 0.15
-	var glow_mat := _make_material(Color(1.0, 0.4, 0.4, 1.0) if powered else Color(0.3, 0.1, 0.1, 1.0))
+	var glow_mat := StandardMaterial3D.new()
+	glow_mat.albedo_color = Color(1.0, 0.4, 0.4, 1.0) if powered else Color(0.3, 0.1, 0.1, 1.0)
+	glow_mat.emission_enabled = true
+	glow_mat.emission = Color(1.0, 0.4, 0.4, 1.0) if powered else Color(0.15, 0.03, 0.03, 1.0)
+	glow_mat.emission_energy_multiplier = 3.0
 	var glow_mesh := BoxMesh.new()
 	glow_mesh.size = Vector3(glow_size, glow_size, glow_size)
 	glow_mesh.material = glow_mat
@@ -453,7 +484,9 @@ func _update_parts() -> void:
 
 func _update_led_powered(idx: int, powered: bool) -> void:
 	if idx < glow_materials.size() and is_instance_valid(glow_materials[idx]):
-		glow_materials[idx].albedo_color = Color(1.0, 0.4, 0.4, 1.0) if powered else Color(0.3, 0.1, 0.1, 1.0)
+		var mat := glow_materials[idx]
+		mat.albedo_color = Color(1.0, 0.4, 0.4, 1.0) if powered else Color(0.3, 0.1, 0.1, 1.0)
+		mat.emission = Color(1.0, 0.4, 0.4, 1.0) if powered else Color(0.15, 0.03, 0.03, 1.0)
 
 
 # -- Highlights ------------------------------------------------------------
