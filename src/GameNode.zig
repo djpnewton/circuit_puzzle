@@ -20,12 +20,6 @@ const OmniLight3D = godot.class.OmniLight3d;
 const MeshInstance3D = godot.class.MeshInstance3d;
 const ImmediateMesh = godot.class.ImmediateMesh;
 const StandardMaterial3D = godot.class.StandardMaterial3d;
-const Label = godot.class.Label;
-const Panel = godot.class.Panel;
-const StyleBoxFlat = godot.class.StyleBoxFlat;
-const ColorRect = godot.class.ColorRect;
-const CanvasLayer = godot.class.CanvasLayer;
-const Control = godot.class.Control;
 const Engine = godot.class.Engine;
 const Input = godot.class.Input;
 const InputEvent = godot.class.InputEvent;
@@ -64,58 +58,6 @@ const MAX_PARTS: usize = 8;
 
 // --- Node fields ----------------------------------------------------------
 
-/// A Control that draws a circular refresh/rotate arrow icon using NOTIFICATION_DRAW.
-pub const CircularArrowIcon = struct {
-    base: *Control,
-
-    pub fn register(r: *godot.extension.Registry) void {
-        r.addClass(CircularArrowIcon, r.allocator, .{});
-    }
-    pub fn unregister(r: *godot.extension.Registry) void {
-        r.removeClass(CircularArrowIcon);
-    }
-    pub fn create(allocator: *Allocator) !*CircularArrowIcon {
-        const self = try allocator.create(CircularArrowIcon);
-        self.* = .{ .base = .init() };
-        self.base.setInstance(CircularArrowIcon, self);
-        return self;
-    }
-    pub fn recreate(allocator: *Allocator, obj: *godot.class.Object) *CircularArrowIcon {
-        const self = allocator.create(CircularArrowIcon) catch @panic("OOM");
-        self.* = .{ .base = @ptrCast(obj) };
-        self.base.setInstance(CircularArrowIcon, self);
-        return self;
-    }
-    pub fn destroy(self: *CircularArrowIcon, allocator: *Allocator) void {
-        self.base.destroy();
-        allocator.destroy(self);
-    }
-
-    pub fn _notification(self: *CircularArrowIcon, what: i32, _: bool) void {
-        if (what != 30) return; // NOTIFICATION_DRAW
-        const cx: f32 = 18;
-        const cy: f32 = 18;
-        const r: f32 = 11;
-        const start_angle: f64 = 2.094;
-        const end_angle: f64 = 6.807;
-        const white = Color{ .r = 0.9, .g = 0.9, .b = 0.9, .a = 1.0 };
-        self.base.drawArc(Vector2{ .x = cx, .y = cy }, r, start_angle, end_angle, 32, white, .{ .width = 2.0 });
-        const cos_e = @cos(end_angle);
-        const sin_e = @sin(end_angle);
-        const tip_x: f32 = cx + r * @as(f32, @floatCast(cos_e));
-        const tip_y: f32 = cy + r * @as(f32, @floatCast(sin_e));
-        const tip = Vector2{ .x = tip_x, .y = tip_y };
-        const tdx: f32 = @as(f32, @floatCast(sin_e));
-        const tdy: f32 = @as(f32, @floatCast(-cos_e));
-        const asz: f32 = 5;
-        const hw: f32 = asz * 0.6;
-        const a1 = Vector2{ .x = tip_x - tdx * asz + tdy * hw, .y = tip_y - tdy * asz - tdx * hw };
-        const a2 = Vector2{ .x = tip_x - tdx * asz - tdy * hw, .y = tip_y - tdy * asz + tdx * hw };
-        self.base.drawLine(tip, a1, white, .{ .width = 2.0 });
-        self.base.drawLine(tip, a2, white, .{ .width = 2.0 });
-    }
-};
-
 pub const GameNode = struct {
     allocator: Allocator,
     base: *Node3D,
@@ -134,33 +76,13 @@ pub const GameNode = struct {
     drag_origin: parts.Vec3 = .{ .x = 0, .y = 0, .z = 0 },
     selected_part: ?usize = null,
     hovered_part: ?usize = null,
-    show_info: bool = false,
     camera_drag_active: bool = false,
     last_mouse_pos: Vector2 = .{ .x = 0, .y = 0 },
     mouse_pressed: bool = false,
-    ui_btn_clicked: bool = false,
 
     // Drag placement target
     target_block: ?parts.Vec3 = null,
     target_valid: bool = false,
-
-    // UI root (CanvasLayer keeps UI separate from 3D)
-    ui_layer: *CanvasLayer = undefined,
-
-    // UI node references (for enhanced layout)
-    stats_panel: *ColorRect = undefined,
-    stats_name_label: *Label = undefined,
-    stats_volts_label: *Label = undefined,
-    stats_drop_label: *Label = undefined,
-    info_btn_label: *Label = undefined,
-    info_btn_bg: *Panel = undefined,
-    reset_btn_icon: *CircularArrowIcon = undefined,
-    reset_btn_bg: *Panel = undefined,
-    modal_overlay: *ColorRect = undefined,
-    modal_title: *Label = undefined,
-    modal_desc: *Label = undefined,
-    debug_btn_label: *Label = undefined,
-    solve_btn_bg: *Panel = undefined,
 
     // Part state (fixed 8 parts matching original map.zig layout)
     part_data: [MAX_PARTS]parts.Part = undefined,
@@ -219,7 +141,6 @@ pub const GameNode = struct {
         self.setupMesh();
         self.setupLights();
         self.setupLEDModel();
-        self.setupUI();
         self.updateCircuit();
         self.rebuildMesh();
     }
@@ -309,130 +230,6 @@ pub const GameNode = struct {
         }
     }
 
-    fn setupUI(self: *GameNode) void {
-        // CanvasLayer renders UI on top of 3D content
-        self.ui_layer = CanvasLayer.init();
-        self.base.addChild(.upcast(self.ui_layer), .{});
-
-        const fs = StringName.fromString(String.fromLatin1("font_size"));
-        const fc = StringName.fromString(String.fromLatin1("font_color"));
-        const ui = self.ui_layer;
-
-        // --- Stats panel (top-left) ---
-        self.stats_panel = ColorRect.init();
-        self.stats_panel.setPosition(.{ .x = 8, .y = 8 }, .{});
-        self.stats_panel.setSize(.{ .x = 220, .y = 80 }, .{});
-        self.stats_panel.setColor(.{ .r = 0.1, .g = 0.1, .b = 0.15, .a = 0.85 });
-        self.stats_panel.setMouseFilter(Control.MouseFilter.mouse_filter_ignore);
-        ui.addChild(.upcast(self.stats_panel), .{});
-
-        self.stats_name_label = Label.init();
-        self.stats_name_label.setPosition(.{ .x = 16, .y = 12 }, .{});
-        self.stats_name_label.addThemeFontSizeOverride(fs, 16);
-        ui.addChild(.upcast(self.stats_name_label), .{});
-
-        self.stats_volts_label = Label.init();
-        self.stats_volts_label.setPosition(.{ .x = 16, .y = 36 }, .{});
-        self.stats_volts_label.addThemeColorOverride(fc, .{ .r = 0.55, .g = 0.55, .b = 0.67, .a = 1.0 });
-        ui.addChild(.upcast(self.stats_volts_label), .{});
-
-        self.stats_drop_label = Label.init();
-        self.stats_drop_label.setPosition(.{ .x = 16, .y = 54 }, .{});
-        self.stats_drop_label.addThemeColorOverride(fc, .{ .r = 0.55, .g = 0.55, .b = 0.67, .a = 1.0 });
-        ui.addChild(.upcast(self.stats_drop_label), .{});
-
-        // --- Info button (bottom-left, circular) ---
-        var info_stylebox = StyleBoxFlat.init();
-        info_stylebox.setBgColor(.{ .r = 0.12, .g = 0.12, .b = 0.18, .a = 0.9 });
-        info_stylebox.setCornerRadiusAll(18);
-        var panel_name = StringName.fromString(String.fromLatin1("panel"));
-        defer panel_name.deinit();
-        self.info_btn_bg = Panel.init();
-        self.info_btn_bg.setPosition(.{ .x = 24, .y = 650 }, .{});
-        self.info_btn_bg.setSize(.{ .x = 36, .y = 36 }, .{});
-        self.info_btn_bg.setMouseFilter(Control.MouseFilter.mouse_filter_ignore);
-        _ = self.info_btn_bg.addThemeStyleboxOverride(panel_name, .upcast(info_stylebox));
-        ui.addChild(.upcast(self.info_btn_bg), .{});
-
-        self.info_btn_label = Label.init();
-        self.info_btn_label.setPosition(.{ .x = 34, .y = 648 }, .{});
-        self.info_btn_label.setText(String.fromLatin1("i"));
-        self.info_btn_label.addThemeFontSizeOverride(fs, 24);
-        self.info_btn_label.addThemeColorOverride(fc, .{ .r = 0.9, .g = 0.9, .b = 0.9, .a = 1.0 });
-        ui.addChild(.upcast(self.info_btn_label), .{});
-
-        // --- Reset button (bottom-left, circular) ---
-        var reset_stylebox = StyleBoxFlat.init();
-        reset_stylebox.setBgColor(.{ .r = 0.12, .g = 0.12, .b = 0.18, .a = 0.9 });
-        reset_stylebox.setCornerRadiusAll(18);
-        self.reset_btn_bg = Panel.init();
-        self.reset_btn_bg.setPosition(.{ .x = 68, .y = 650 }, .{});
-        self.reset_btn_bg.setSize(.{ .x = 36, .y = 36 }, .{});
-        self.reset_btn_bg.setMouseFilter(Control.MouseFilter.mouse_filter_ignore);
-        _ = self.reset_btn_bg.addThemeStyleboxOverride(panel_name, .upcast(reset_stylebox));
-        ui.addChild(.upcast(self.reset_btn_bg), .{});
-
-        // Circular arrow icon drawn via NOTIFICATION_DRAW
-        self.reset_btn_icon = CircularArrowIcon.create(&self.allocator) catch @panic("OOM");
-        self.reset_btn_icon.base.setSize(.{ .x = 36, .y = 36 }, .{});
-        self.reset_btn_icon.base.setPosition(.{ .x = 68, .y = 650 }, .{});
-        self.reset_btn_icon.base.setMouseFilter(Control.MouseFilter.mouse_filter_ignore);
-        ui.addChild(.upcast(self.reset_btn_icon.base), .{});
-
-        // --- Solve button (red, bottom-right) ---
-        var solve_stylebox = StyleBoxFlat.init();
-        solve_stylebox.setBgColor(.{ .r = 0.7, .g = 0.1, .b = 0.1, .a = 1.0 });
-        solve_stylebox.setBorderColor(.{ .r = 0.5, .g = 0.05, .b = 0.05, .a = 1.0 });
-        solve_stylebox.setBorderWidthAll(2);
-        solve_stylebox.setCornerRadiusAll(6);
-        self.solve_btn_bg = Panel.init();
-        self.solve_btn_bg.setPosition(.{ .x = 1080, .y = 648 }, .{});
-        self.solve_btn_bg.setSize(.{ .x = 80, .y = 36 }, .{});
-        self.solve_btn_bg.setMouseFilter(Control.MouseFilter.mouse_filter_ignore);
-        _ = self.solve_btn_bg.addThemeStyleboxOverride(panel_name, .upcast(solve_stylebox));
-        ui.addChild(.upcast(self.solve_btn_bg), .{});
-
-        self.debug_btn_label = Label.init();
-        self.debug_btn_label.setPosition(.{ .x = 1090, .y = 648 }, .{});
-        self.debug_btn_label.setText(String.fromLatin1("SOLVE"));
-        self.debug_btn_label.addThemeFontSizeOverride(fs, 18);
-        self.debug_btn_label.addThemeColorOverride(fc, .{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 1.0 });
-        ui.addChild(.upcast(self.debug_btn_label), .{});
-
-        // --- Info modal (overlay, hidden by default) ---
-        self.modal_overlay = ColorRect.init();
-        self.modal_overlay.setAnchorsPreset(.preset_full_rect, .{});
-        self.modal_overlay.setColor(.{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 0.6 });
-        self.modal_overlay.setVisible(false);
-        self.modal_overlay.setMouseFilter(Control.MouseFilter.mouse_filter_stop);
-        ui.addChild(.upcast(self.modal_overlay), .{});
-
-        self.modal_title = Label.init();
-        self.modal_title.setPosition(.{ .x = 450, .y = 280 }, .{});
-        self.modal_title.addThemeFontSizeOverride(fs, 24);
-        self.modal_title.setVisible(false);
-        ui.addChild(.upcast(self.modal_title), .{});
-
-        self.modal_desc = Label.init();
-        self.modal_desc.setPosition(.{ .x = 460, .y = 330 }, .{});
-        self.modal_desc.setSize(.{ .x = 360, .y = 200 }, .{});
-        self.modal_desc.addThemeFontSizeOverride(fs, 14);
-        self.modal_desc.setVisible(false);
-        ui.addChild(.upcast(self.modal_desc), .{});
-
-        // Hide all interactive UI until a part is selected
-        self.stats_panel.setVisible(false);
-        self.stats_name_label.setVisible(false);
-        self.stats_volts_label.setVisible(false);
-        self.stats_drop_label.setVisible(false);
-        self.info_btn_bg.setVisible(false);
-        self.info_btn_label.setVisible(false);
-        self.reset_btn_bg.setVisible(false);
-        self.reset_btn_icon.base.setVisible(false);
-        self.solve_btn_bg.setVisible(false);
-        self.debug_btn_label.setVisible(false);
-    }
-
     // --- Per-frame update -----------------------------------------------------
 
     pub fn _process(self: *GameNode, delta: f64) void {
@@ -441,13 +238,73 @@ pub const GameNode = struct {
         self.handleCameraKeys(dt);
         self.updateCameraTransform();
         self.updateLEDLights();
-        self.updateStatsPanel();
         self.rebuildMesh();
 
-        // Debug solve button visibility
-        const debug_mode = @import("builtin").mode == .Debug;
-        self.solve_btn_bg.setVisible(debug_mode);
-        self.debug_btn_label.setVisible(debug_mode);
+        // Write state to meta so GDScript UI can read it
+        self.writeUIMeta();
+    }
+
+    fn writeUIMeta(self: *GameNode) void {
+        const idx: i64 = if (self.selected_part) |i| @as(i64, @intCast(i)) else -1;
+        self.base.setMeta(
+            StringName.fromLatin1("selected_index", false),
+            Variant.init(i64, idx),
+        );
+
+        if (self.selected_part) |i| {
+            const kind = self.part_data[i].kind;
+            self.base.setMeta(StringName.fromLatin1("_part_name", false), Variant.init(String, String.fromLatin1(parts.name(kind))));
+            self.base.setMeta(StringName.fromLatin1("_part_kind", false), Variant.init(i64, @intFromEnum(kind)));
+            self.base.setMeta(StringName.fromLatin1("_part_volts_in", false), Variant.init(f64, self.stats[i].volts_in));
+            self.base.setMeta(StringName.fromLatin1("_part_drop", false), Variant.init(f64, self.stats[i].voltage_drop));
+            self.base.setMeta(StringName.fromLatin1("_part_description", false), Variant.init(String, String.fromLatin1(parts.description(kind))));
+        }
+
+        // Handle action triggers from GDScript
+        const act_rotate = self.base.getMeta(StringName.fromLatin1("_action_rotate", false), .{ .default = Variant.init(bool, false) });
+        if (act_rotate.booleanize()) {
+            self.base.removeMeta(StringName.fromLatin1("_action_rotate", false));
+            self.rotateSelectedPart();
+        }
+        const act_solve = self.base.getMeta(StringName.fromLatin1("_action_solve", false), .{ .default = Variant.init(bool, false) });
+        if (act_solve.booleanize()) {
+            self.base.removeMeta(StringName.fromLatin1("_action_solve", false));
+            self.debugSolve();
+        }
+    }
+
+    // --- GDScript bridge: data access ----------------------------------------
+
+    pub fn get_selected_index(self: *const GameNode) i64 {
+        return if (self.selected_part) |i| @as(i64, @intCast(i)) else -1;
+    }
+
+    pub fn get_part_string(self: *const GameNode, idx: i64, which: i64) String {
+        const i: usize = @intCast(idx);
+        if (i >= MAX_PARTS) return String.fromLatin1("???");
+        const kind = self.part_data[i].kind;
+        return if (which == 0)
+            String.fromLatin1(parts.name(kind))
+        else
+            String.fromLatin1(parts.description(kind));
+    }
+
+    pub fn get_part_kind(self: *const GameNode, idx: i64) i64 {
+        const i: usize = @intCast(idx);
+        if (i >= MAX_PARTS) return -1;
+        return @intFromEnum(self.part_data[i].kind);
+    }
+
+    pub fn get_part_volts_in(self: *const GameNode, idx: i64) f64 {
+        const i: usize = @intCast(idx);
+        if (i >= MAX_PARTS) return 0;
+        return self.stats[i].volts_in;
+    }
+
+    pub fn get_part_voltage_drop(self: *const GameNode, idx: i64) f64 {
+        const i: usize = @intCast(idx);
+        if (i >= MAX_PARTS) return 0;
+        return self.stats[i].voltage_drop;
     }
 
     fn rotateSelectedPart(self: *GameNode) void {
@@ -518,73 +375,12 @@ pub const GameNode = struct {
         }
     }
 
-    fn updateStatsPanel(self: *GameNode) void {
-        if (self.selected_part) |idx| {
-            const kind = self.part_data[idx].kind;
-            var buf: [128]u8 = undefined;
-
-            // Name
-            const name_str = std.fmt.bufPrint(&buf, "{s}", .{parts.name(kind)}) catch "";
-            var sn_ = String.fromLatin1(name_str);
-            defer sn_.deinit();
-            self.stats_name_label.setText(sn_);
-
-            // Volts in (EMF for cells)
-            const volts_str = if (kind == .cell)
-                std.fmt.bufPrint(&buf, "EMF: {d:.2}V", .{self.stats[idx].volts_in}) catch ""
-            else
-                std.fmt.bufPrint(&buf, "Volts in: {d:.2}V", .{self.stats[idx].volts_in}) catch "";
-            var sv = String.fromLatin1(volts_str);
-            defer sv.deinit();
-            self.stats_volts_label.setText(sv);
-
-            // Voltage drop
-            const drop_str = std.fmt.bufPrint(&buf, "Drop: {d:.2}V", .{self.stats[idx].voltage_drop}) catch "";
-            var sd = String.fromLatin1(drop_str);
-            defer sd.deinit();
-            self.stats_drop_label.setText(sd);
-
-            self.stats_panel.setVisible(true);
-            self.stats_name_label.setVisible(true);
-            self.stats_volts_label.setVisible(true);
-            self.stats_drop_label.setVisible(true);
-            self.info_btn_bg.setVisible(true);
-            self.info_btn_label.setVisible(true);
-            self.reset_btn_bg.setVisible(true);
-            self.reset_btn_icon.base.setVisible(true);
-            self.solve_btn_bg.setVisible(true);
-            self.debug_btn_label.setVisible(true);
-        } else {
-            self.stats_panel.setVisible(false);
-            self.stats_name_label.setVisible(false);
-            self.stats_volts_label.setVisible(false);
-            self.stats_drop_label.setVisible(false);
-            self.info_btn_bg.setVisible(false);
-            self.info_btn_label.setVisible(false);
-            self.reset_btn_bg.setVisible(false);
-            self.reset_btn_icon.base.setVisible(false);
-            self.solve_btn_bg.setVisible(false);
-            self.debug_btn_label.setVisible(false);
-        }
-    }
-
     // --- Input handling -------------------------------------------------------
 
     pub fn _input(self: *GameNode, event: *InputEvent) void {
         if (Engine.isEditorHint()) return;
 
-        // --- Info modal takes all clicks to dismiss ---
-        if (self.show_info) {
-            if (event.isPressed()) {
-                self.show_info = false;
-                self.modal_overlay.setVisible(false);
-                self.modal_title.setVisible(false);
-                self.modal_desc.setVisible(false);
-            }
-            return;
-        }
-
-        // --- Keyboard: R to rotate ---
+        // --- Keyboard: R to rotate (always handle, even when UI is focused) ---
         if (event.isClass(.fromLatin1("InputEventKey"))) {
             const ke: *InputEventKey = @ptrCast(event);
             if (ke.isPressed() and !ke.isEcho()) {
@@ -593,6 +389,11 @@ pub const GameNode = struct {
                 }
             }
         }
+    }
+
+    /// Mouse/touch events that should only fire when the GUI didn't consume them.
+    pub fn _unhandled_input(self: *GameNode, event: *InputEvent) void {
+        if (Engine.isEditorHint()) return;
 
         // --- Mouse button ---
         if (event.isClass(.fromLatin1("InputEventMouseButton"))) {
@@ -663,52 +464,10 @@ pub const GameNode = struct {
         }
     }
 
-    fn isInRect(pos: Vector2, rx: f32, ry: f32, rw: f32, rh: f32) bool {
-        return pos.x >= rx and pos.x <= rx + rw and pos.y >= ry and pos.y <= ry + rh;
-    }
-
     fn onPointerPressed(self: *GameNode, screen_pos: Vector2) void {
         self.mouse_pressed = true;
         self.last_mouse_pos = screen_pos;
-        self.ui_btn_clicked = false;
 
-        // Check UI button clicks (only when a part is selected)
-        if (self.selected_part != null) {
-            // Info button (ⓘ at ~40, 660)
-            if (isInRect(screen_pos, 32, 652, 44, 44)) {
-                self.ui_btn_clicked = true;
-                self.show_info = true;
-                self.modal_overlay.setVisible(true);
-                const idx = self.selected_part.?;
-                const kind = self.part_data[idx].kind;
-                var buf: [512]u8 = undefined;
-                var st = String.fromLatin1(parts.name(kind));
-                defer st.deinit();
-                self.modal_title.setText(st);
-                const desc = std.fmt.bufPrint(&buf, "{s}", .{parts.description(kind)}) catch "";
-                var sd = String.fromLatin1(desc);
-                defer sd.deinit();
-                self.modal_desc.setText(sd);
-                self.modal_title.setVisible(true);
-                self.modal_desc.setVisible(true);
-                return;
-            }
-            // Reset button (↻ at ~68, 650)
-            if (isInRect(screen_pos, 66, 648, 40, 40)) {
-                self.ui_btn_clicked = true;
-                self.rotateSelectedPart();
-                return;
-            }
-        }
-
-        // Debug solve button (bottom-right, red)
-        if (isInRect(screen_pos, 1078, 646, 84, 40)) {
-            self.ui_btn_clicked = true;
-            self.debugSolve();
-            return;
-        }
-
-        // Raycast for part picking
         const hit = self.screenRaycastParts(screen_pos);
         if (hit) |idx| {
             self.dragging = idx;
@@ -1316,10 +1075,8 @@ pub const GameNode = struct {
 
 pub fn register(r: *godot.extension.Registry) void {
     GameNode.register(r);
-    CircularArrowIcon.register(r);
 }
 
 pub fn unregister(r: *godot.extension.Registry) void {
     GameNode.unregister(r);
-    CircularArrowIcon.unregister(r);
 }
