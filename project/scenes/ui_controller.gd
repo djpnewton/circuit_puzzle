@@ -1,6 +1,5 @@
 extends Node
 ## UI Controller for the Circuit Puzzle game.
-## Attached to a child node of the main GameNode (Zig GDExtension).
 ## Creates and manages all 2D UI elements, polling game state each frame.
 
 var ui_layer: CanvasLayer

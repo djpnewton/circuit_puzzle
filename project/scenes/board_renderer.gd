@@ -1,13 +1,10 @@
 extends Node3D
 ## 3D Node-based Board Renderer for Circuit Puzzle.
-##
-## Attached as a child of the GameNode (Zig GDExtension). Reads part state
-## from the parent's meta properties each frame and creates/manages Godot 3D
-## nodes (MeshInstance3D) to render the terrain grid and all circuit parts.
-##
-## Intended as a GDScript alternative to the ImmediateMesh rendering in Zig.
+## 
+## creates/manages Godot 3D nodes (MeshInstance3D) to render the terrain grid
+## and all circuit parts.
 
-# -- Constants (matching Zig GameNode) --------------------------------------
+# -- Constants  --------------------------------------
 enum PartType { CELL, WIRE_STRAIGHT, WIRE_CORNER, LED }
 enum Orientation { ROT0, ROT90, ROT180, ROT270 }
 
