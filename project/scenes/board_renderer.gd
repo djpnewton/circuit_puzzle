@@ -273,6 +273,27 @@ func _make_box_mesh(size: Vector3, color: Color) -> BoxMesh:
 	return mesh
 
 
+func _make_label(text: String, parent: Node3D, local_pos: Vector3, font_size: int = 48) -> Label3D:
+	var label := Label3D.new()
+	label.text = text
+	label.font_size = font_size
+	label.modulate = Color(1.0, 1.0, 1.0, 0.9)
+	label.pixel_size = 0.005
+	label.outline_modulate = Color(0.0, 0.0, 0.0, 0.8)
+	label.outline_size = 4
+	label.position = local_pos
+	# Rotate to lie flat on the base plate
+	label.rotation = Vector3(-PI / 2.0, 0.0, 0.0)
+
+	# Assign a font so it renders when created via code
+	var theme := ThemeDB.get_project_theme()
+	if theme and theme.default_font:
+		label.font = theme.default_font
+
+	parent.add_child(label)
+	return label
+
+
 func _add_cylinder(parent: Node3D, pos_a: Vector3, pos_b: Vector3, radius: float, color: Color) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var dx := pos_b.x - pos_a.x
@@ -316,6 +337,14 @@ func _build_cell_visuals(root: Node3D, _idx: int, top_y: float) -> void:
 	part_visuals[_idx].append(_add_cylinder(root, split_pt, pos_end, r, COPPER))
 	part_visuals[_idx].append(_add_cylinder(root, pos_end, nub_end, r * 0.45, METAL))
 	part_visuals[_idx].append(_add_cylinder(root, cap_start, neg_end, r * 1.02, METAL))
+
+	# + and - labels on the base plate
+	part_visuals[_idx].append(
+		_make_label("+", root, Vector3(s * 0.3, top_y + s * 0.02, -s * 0.3))
+	)
+	part_visuals[_idx].append(
+		_make_label("-", root, Vector3(-s * 0.3, top_y + s * 0.02, -s * 0.3))
+	)
 
 
 func _build_wire_straight_visuals(root: Node3D, _idx: int, top_y: float) -> void:
@@ -369,6 +398,14 @@ func _build_led_visuals(root: Node3D, _idx: int, top_y: float, powered: bool) ->
 	# Simple LED body: red cylinder
 	var body := _add_cylinder(root, Vector3(-s * 0.25, y, 0.0), Vector3(s * 0.25, y, 0.0), r, Color(0.9, 0.2, 0.2, 1.0))
 	part_visuals[_idx].append(body)
+
+	# A (Anode) and K (Cathode) labels on the base plate
+	part_visuals[_idx].append(
+		_make_label("A", root, Vector3(s * 0.25, top_y + s * 0.02, -s * 0.3))
+	)
+	part_visuals[_idx].append(
+		_make_label("K", root, Vector3(-s * 0.25, top_y + s * 0.02, -s * 0.3))
+	)
 
 	# Glow indicator
 	var glow_mi := MeshInstance3D.new()
