@@ -90,45 +90,45 @@ static func part_description(kind: int) -> String:
 # - Circuit simulation ----------------------------------
 
 static func simulate_circuit(
-	part_kinds: Array[int],
-	part_orients: Array[int],
-	part_positions: Array[Vector3],
-	powered: Array[bool],
-	stats_volts_in: Array[float],
-	stats_drop: Array[float],
+	kinds: Array[int],
+	orients: Array[int],
+	positions: Array[Vector3],
+	pwr: Array[bool],
+	volts_in: Array[float],
+	drop: Array[float],
 ) -> void:
-	var n := part_kinds.size()
+	var n := kinds.size()
 	for i in n:
-		powered[i] = false
-		stats_volts_in[i] = 0.0
-		stats_drop[i] = 0.0
+		pwr[i] = false
+		volts_in[i] = 0.0
+		drop[i] = 0.0
 
 	# Grid positions
 	var grid: Array[Vector2i] = []
 	grid.resize(MAX_PARTS)
 	for i in n:
 		grid[i] = Vector2i(
-			int(round(part_positions[i].x)),
-			int(round(part_positions[i].z)),
+			int(round(positions[i].x)),
+			int(round(positions[i].z)),
 		)
 
 	# Find first battery
 	var batt := -1
 	for i in n:
-		if part_kinds[i] == PartType.CELL:
+		if kinds[i] == PartType.CELL:
 			batt = i
 			break
 	if batt < 0:
 		return
 
-	var bp := battery_plus_dir(part_orients[batt])
+	var bp := battery_plus_dir(orients[batt])
 	var bm := opposite(bp)
 
 	# Cell EMF always shown
 	for i in n:
-		if part_kinds[i] == PartType.CELL:
-			stats_volts_in[i] = CELL_VOLTAGE
-			stats_drop[i] = 0.0
+		if kinds[i] == PartType.CELL:
+			volts_in[i] = CELL_VOLTAGE
+			drop[i] = 0.0
 
 	# max_volt[i * 4 + dir_ordinal]
 	var max_volt: Array[float] = []
@@ -169,7 +169,7 @@ static func simulate_circuit(
 			continue
 
 		var arr_dir := opposite(cur_exit)
-		var nb_ports := connect_dirs(part_kinds[nb], part_orients[nb])
+		var nb_ports := connect_dirs(kinds[nb], orients[nb])
 
 		if nb_ports[0] != arr_dir and nb_ports[1] != arr_dir:
 			continue
@@ -185,8 +185,8 @@ static func simulate_circuit(
 			continue
 
 		# Secondary cell in series
-		if part_kinds[nb] == PartType.CELL:
-			var cp := battery_plus_dir(part_orients[nb])
+		if kinds[nb] == PartType.CELL:
+			var cp := battery_plus_dir(orients[nb])
 			var cm := opposite(cp)
 			if arr_dir != cm:
 				continue
@@ -196,18 +196,18 @@ static func simulate_circuit(
 			continue
 
 		# Voltage stats
-		var v_drop: float = LED_FORWARD_VOLTAGE if part_kinds[nb] == PartType.LED else 0.0
-		stats_volts_in[nb] = cur_volt
-		stats_drop[nb] = v_drop
+		var v_drop: float = LED_FORWARD_VOLTAGE if kinds[nb] == PartType.LED else 0.0
+		volts_in[nb] = cur_volt
+		drop[nb] = v_drop
 		var v_out := maxf(0.0, cur_volt - v_drop)
 
 		# LED: must enter anode (port[0]) with sufficient voltage
-		if part_kinds[nb] == PartType.LED:
+		if kinds[nb] == PartType.LED:
 			if arr_dir != nb_ports[0]:
 				continue
 			if cur_volt < LED_FORWARD_VOLTAGE:
 				continue
-			powered[nb] = true
+			pwr[nb] = true
 
 		# Propagate through other port
 		for pd in nb_ports:
@@ -220,10 +220,10 @@ static func simulate_circuit(
 	# If circuit not closed, LEDs and stats (except cell EMF) are reset
 	if not circuit_closed:
 		for i in n:
-			powered[i] = false
-			if part_kinds[i] != PartType.CELL:
-				stats_volts_in[i] = 0.0
-				stats_drop[i] = 0.0
+			pwr[i] = false
+			if kinds[i] != PartType.CELL:
+				volts_in[i] = 0.0
+				drop[i] = 0.0
 
 # - Node references ----------------------------------------------------------
 
@@ -356,11 +356,11 @@ func _update_led_model() -> void:
 			# Position led_top GLB model (spun 180° to align with circuit direction)
 			if is_instance_valid(led_model_root):
 				var angle := float(part_orients[i]) * PI * 0.5 + PI
-				var basis := Basis(Vector3.UP, angle)
+				var xf_basis := Basis(Vector3.UP, angle)
 				var s: float = 0.3
-				basis = basis.scaled(Vector3(s, s, s))
+				xf_basis = xf_basis.scaled(Vector3(s, s, s))
 				var origin := Vector3(p.x, top + 0.5, p.z)
-				led_model_root.transform = Transform3D(basis, origin)
+				led_model_root.transform = Transform3D(xf_basis, origin)
 
 			# LED glow light
 			if i < led_lights.size() and is_instance_valid(led_lights[i]):
