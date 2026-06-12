@@ -157,7 +157,7 @@ static func _led_exit_reaches_battery(
 				nb = j
 				break
 		if nb < 0:
-			continue  # dead end — LED's exit path is broken
+			continue  # dead end - LED's exit path is broken
 
 		var arr_dir := opposite(cur_exit)
 		var nb_ports := connect_dirs(kinds[nb], orients[nb])
@@ -180,39 +180,19 @@ static func _led_exit_reaches_battery(
 	return false
 
 
-static func simulate_circuit(
+# Run BFS from a given primary battery. Returns (closed, pwr_snapshot, volts_snapshot, drop_snapshot).
+static func _bfs_from_battery(
+	batt: int,
 	kinds: Array[int],
 	orients: Array[int],
 	positions: Array[Vector3],
 	pwr: Array[bool],
 	volts_in: Array[float],
 	drop: Array[float],
-) -> void:
+) -> bool:
 	var n := kinds.size()
-	for i in n:
-		pwr[i] = false
-		volts_in[i] = 0.0
-		drop[i] = 0.0
-
-	# Find first battery (skip invalid parts)
-	var batt := -1
-	for i in n:
-		if kinds[i] < 0:
-			continue
-		if kinds[i] == PartType.CELL:
-			batt = i
-			break
-	if batt < 0:
-		return
-
 	var bp := battery_plus_dir(orients[batt])
 	var bm := opposite(bp)
-
-	# Cell EMF always shown
-	for i in n:
-		if kinds[i] == PartType.CELL:
-			volts_in[i] = CELL_VOLTAGE
-			drop[i] = 0.0
 
 	# max_volt[i * 4 + dir_ordinal]
 	var max_volt: Array[float] = []
@@ -220,16 +200,13 @@ static func simulate_circuit(
 	for i in MAX_PARTS * 4:
 		max_volt[i] = 0.0
 
-	# BFS queue
-	var queue_idx: Array[int] = []
-	var queue_exit: Array[int] = []
-	var queue_volt: Array[float] = []
+	# BFS queue - uses depth-first expansion for cells: when exploring from a
+	# cell, follow the path through non-cells until reaching another cell or
+	# the battery, so voltage accumulates before hitting LEDs.
+	var queue_idx: Array[int] = [batt]
+	var queue_exit: Array[int] = [bp]
+	var queue_volt: Array[float] = [CELL_VOLTAGE]
 	var qhead := 0
-
-	# Seed: current exits battery + terminal
-	queue_idx.append(batt)
-	queue_exit.append(bp)
-	queue_volt.append(CELL_VOLTAGE)
 
 	var circuit_closed := false
 
@@ -243,8 +220,8 @@ static func simulate_circuit(
 			int(round(positions[cur_idx].x)),
 			int(round(positions[cur_idx].z)),
 		)
-		var dd := dir_delta(cur_exit)
-		var nb_gpos := Vector2i(my_gpos.x + dd.x, my_gpos.y + dd.y)
+		var dd2 := dir_delta(cur_exit)
+		var nb_gpos := Vector2i(my_gpos.x + dd2.x, my_gpos.y + dd2.y)
 
 		# Find neighbour (skip invalid parts)
 		var nb := -1
@@ -283,9 +260,11 @@ static func simulate_circuit(
 			var cm := opposite(cp)
 			if arr_dir != cm:
 				continue
-			queue_idx.append(nb)
-			queue_exit.append(cp)
-			queue_volt.append(cur_volt + CELL_VOLTAGE)
+			# Push cell expansion to front of queue (depth-first) so cells
+			# are processed before other components further back in the queue
+			queue_idx.insert(qhead, nb)
+			queue_exit.insert(qhead, cp)
+			queue_volt.insert(qhead, cur_volt + CELL_VOLTAGE)
 			continue
 
 		# Voltage stats
@@ -294,21 +273,39 @@ static func simulate_circuit(
 		drop[nb] = v_drop
 		var v_out := maxf(0.0, cur_volt - v_drop)
 
-		# LED: must enter anode (port[0]) with sufficient voltage
+		# LED: must enter anode (port[0]) - undervoltage blocks (acts as open switch)
 		if kinds[nb] == PartType.LED:
 			if arr_dir != nb_ports[0]:
 				continue
 			if cur_volt < LED_FORWARD_VOLTAGE:
-				continue
+				continue  # blocks current - LED is an open switch below threshold
 			pwr[nb] = true
 
 		# Propagate through other ports
 		for pd in nb_ports:
 			if pd == arr_dir:
 				continue
-			queue_idx.append(nb)
-			queue_exit.append(pd)
-			queue_volt.append(v_out)
+			# If the destination is a cell, insert at front for immediate processing
+			var dest_idx := -1
+			var dpos := Vector2i(
+				int(round(positions[nb].x)) + dir_delta(pd).x,
+				int(round(positions[nb].z)) + dir_delta(pd).y,
+			)
+			for j in n:
+				if kinds[j] < 0:
+					continue
+				var jpos := Vector2i(int(round(positions[j].x)), int(round(positions[j].z)))
+				if jpos == dpos:
+					dest_idx = j
+					break
+			if dest_idx >= 0 and kinds[dest_idx] == PartType.CELL:
+				queue_idx.insert(qhead, nb)
+				queue_exit.insert(qhead, pd)
+				queue_volt.insert(qhead, v_out)
+			else:
+				queue_idx.append(nb)
+				queue_exit.append(pd)
+				queue_volt.append(v_out)
 
 	# After BFS: verify each powered LED's exit path independently closes
 	if circuit_closed:
@@ -322,6 +319,66 @@ static func simulate_circuit(
 			if kinds[i] != PartType.CELL:
 				volts_in[i] = 0.0
 				drop[i] = 0.0
+
+	return circuit_closed
+
+
+# Try each cell as the primary battery until one closes the circuit.
+static func simulate_circuit(
+	kinds: Array[int],
+	orients: Array[int],
+	positions: Array[Vector3],
+	pwr: Array[bool],
+	volts_in: Array[float],
+	drop: Array[float],
+) -> void:
+	var n := kinds.size()
+	for i in n:
+		pwr[i] = false
+		volts_in[i] = 0.0
+		drop[i] = 0.0
+
+	# Collect all cells
+	var cells: Array[int] = []
+	for i in n:
+		if kinds[i] < 0:
+			continue
+		if kinds[i] == PartType.CELL:
+			cells.append(i)
+
+	if cells.is_empty():
+		return
+
+	# Cell EMF always shown for ALL cells
+	for i in n:
+		if kinds[i] == PartType.CELL:
+			volts_in[i] = CELL_VOLTAGE
+			drop[i] = 0.0
+
+	# Try each cell as primary battery - first one that closes the circuit wins
+	for batt in cells:
+		# Snapshot-then-restore approach: write results directly into arrays
+		# but reset on failure
+		var saved_pwr: Array[bool] = pwr.duplicate()
+		var saved_vi: Array[float] = volts_in.duplicate()
+		var saved_dr: Array[float] = drop.duplicate()
+
+		var closed := _bfs_from_battery(batt, kinds, orients, positions, pwr, volts_in, drop)
+
+		if closed:
+			return  # found a working battery ordering
+
+		# Restore EMF display and try next cell
+		for i in n:
+			pwr[i] = saved_pwr[i]
+			volts_in[i] = saved_vi[i]
+			drop[i] = saved_dr[i]
+
+	# Restore cell EMF on failure (no cell ordering closed the circuit)
+	for i in n:
+		if kinds[i] == PartType.CELL:
+			volts_in[i] = CELL_VOLTAGE
+			drop[i] = 0.0
 
 # - Node references ----------------------------------------------------------
 
@@ -601,7 +658,7 @@ func _update_led_model() -> void:
 				else:
 					led_lights[i].light_energy = 0.0
 			else:
-				# Not an LED — hide the model
+				# Not an LED - hide the model
 				if i < led_models.size() and is_instance_valid(led_models[i]):
 					led_models[i].visible = false
 				led_lights[i].light_energy = 0.0
