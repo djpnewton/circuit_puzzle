@@ -15,10 +15,15 @@ var modal_title: Label
 var modal_desc: Label
 var show_info: bool = false
 
+var level_label: Label
+var next_btn: Panel
+var comp_label: Label  # "Level Complete!" banner
+
 
 func _ready() -> void:
 	setup_ui()
 	hide_stats()
+	_update_level_ui()
 
 
 func _process(_delta: float) -> void:
@@ -28,6 +33,7 @@ func _process(_delta: float) -> void:
 		show_stats(game, idx)
 	else:
 		hide_stats()
+	_update_level_ui()
 
 
 # -- UI creation ------------------------------------------------------------
@@ -41,6 +47,7 @@ func setup_ui() -> void:
 	_create_rotate_button()
 	_create_solve_button()
 	_create_modal()
+	_create_level_ui()
 
 
 func _create_stats_panel() -> void:
@@ -163,6 +170,78 @@ func _create_modal() -> void:
 	modal_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	modal_desc.visible = false
 	ui_layer.add_child(modal_desc)
+
+# -- Level UI --------------------------------------------------------------
+
+func _create_level_ui() -> void:
+	# Level name label (top center)
+	level_label = Label.new()
+	level_label.add_theme_font_size_override("font_size", 18)
+	level_label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9))
+	level_label.add_theme_constant_override("outline_size", 4)
+	level_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.6))
+	level_label.set_anchors_preset(Control.PRESET_TOP_WIDE, true)
+	level_label.position = Vector2(0, 12)
+	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ui_layer.add_child(level_label)
+
+	# "Level Complete!" banner (below level name)
+	comp_label = Label.new()
+	comp_label.add_theme_font_size_override("font_size", 22)
+	comp_label.add_theme_color_override("font_color", Color(0.3, 1.0, 0.3))
+	comp_label.add_theme_constant_override("outline_size", 4)
+	comp_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.7))
+	comp_label.set_anchors_preset(Control.PRESET_TOP_WIDE, true)
+	comp_label.position = Vector2(0, 40)
+	comp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	comp_label.visible = false
+	ui_layer.add_child(comp_label)
+
+	# Next Level button (top right)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.15, 0.55, 0.15, 1.0)
+	style.border_color = Color(0.1, 0.4, 0.1, 1.0)
+	style.border_width_left = 2
+	style.border_width_right = 2
+	style.border_width_top = 2
+	style.border_width_bottom = 2
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+
+	next_btn = Panel.new()
+	next_btn.size = Vector2(130, 36)
+	next_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	next_btn.add_theme_stylebox_override("panel", style)
+	next_btn.gui_input.connect(_on_next_clicked)
+	next_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT, true)
+	next_btn.position = Vector2(-140, 12)
+	next_btn.visible = false
+	ui_layer.add_child(next_btn)
+
+	_add_label(next_btn, "Next Level", 16)
+
+
+func _update_level_ui() -> void:
+	var game = get_parent()
+	var level: int = game.get_meta("_level_current", 0)
+	var total: int = game.get_meta("_level_count", 1)
+	var name_str: String = game.get_meta("_level_name", "???")
+	var completed: bool = game.get_meta("_level_complete", false)
+
+	level_label.text = "%s  (%d / %d)" % [name_str, level + 1, total]
+
+	comp_label.text = "Level Complete!" if completed else ""
+	comp_label.visible = completed
+
+	next_btn.visible = completed
+
+func _on_next_clicked(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	print("Next level clicked")
+	get_parent().set_meta("_action_next_level", true)
 
 
 # -- Visibility helpers ----------------------------------------------------

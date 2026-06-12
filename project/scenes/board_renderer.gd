@@ -5,7 +5,7 @@ extends Node3D
 ## and all circuit parts.
 
 # -- Constants  --------------------------------------
-enum PartType { CELL, WIRE_STRAIGHT, WIRE_CORNER, LED }
+enum PartType { CELL, WIRE_STRAIGHT, WIRE_CORNER, LED, WIRE_T }
 enum Orientation { ROT0, ROT90, ROT180, ROT270 }
 
 const GRASS_TOP   := Color(0.357, 0.639, 0.294, 1.0)
@@ -95,6 +95,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	_read_constants()
 	_read_state()
 	_update_terrain_visibility()
 	_update_parts()
@@ -107,7 +108,22 @@ func _read_constants() -> void:
 	grid_w = game_node.get_meta("_grid_w", 5)
 	grid_d = game_node.get_meta("_grid_d", 5)
 	block_size = game_node.get_meta("_block_size", 1.0)
-	part_count = game_node.get_meta("_part_count", 8)
+	var new_count: int = game_node.get_meta("_part_count", 12)
+	if new_count != part_count:
+		part_count = new_count
+		_build_part_nodes()
+		glow_materials.resize(part_count)
+		prev_kinds.resize(part_count)
+		prev_orients.resize(part_count)
+		prev_powered.resize(part_count)
+		cur_positions.resize(part_count)
+		cur_kinds.resize(part_count)
+		cur_orients.resize(part_count)
+		cur_powered.resize(part_count)
+		for i in part_count:
+			prev_kinds[i] = -1  # force rebuild
+			prev_orients[i] = -1
+			prev_powered[i] = false
 
 
 func _read_state() -> void:
@@ -179,6 +195,10 @@ func _update_terrain_visibility() -> void:
 # -- Part node management --------------------------------------------------
 
 func _build_part_nodes() -> void:
+	# Remove old parts container if it exists (levels can change part_count)
+	if is_instance_valid(parts_container):
+		parts_container.queue_free()
+
 	parts_container = Node3D.new()
 	parts_container.name = "Parts"
 	add_child(parts_container)
@@ -232,6 +252,8 @@ func _rebuild_part(idx: int, kind: int, orient: int, powered: bool) -> void:
 			_build_wire_corner_visuals(root, idx, top_y)
 		PartType.LED:
 			_build_led_visuals(root, idx, top_y, powered)
+		PartType.WIRE_T:
+			_build_wire_t_visuals(root, idx, top_y)
 
 
 func _platform_top(pos: Vector3) -> float:
@@ -412,6 +434,34 @@ func _build_wire_corner_visuals(root: Node3D, _idx: int, top_y: float) -> void:
 	# Corner sphere (small box approximation)
 	var sphere_mi := MeshInstance3D.new()
 	sphere_mi.mesh = _make_box_mesh(Vector3(r * 2, r * 2, r * 2), SHEATH, 0.0, 0.7)
+	sphere_mi.position = Vector3(0.0, y, 0.0)
+	root.add_child(sphere_mi)
+	part_visuals[_idx].append(sphere_mi)
+
+
+func _build_wire_t_visuals(root: Node3D, _idx: int, top_y: float) -> void:
+	var s := block_size
+	var r := s * 0.08
+	var y := top_y + r
+	var arm := s * 0.5
+	var sf := 0.6
+
+	# T-junction: crossbar goes EAST-WEST, stem goes SOUTH (canonical, -Z in local space)
+	var arms := [
+		Vector3(arm, y, 0.0),     # EAST  (+X)
+		Vector3(-arm, y, 0.0),    # WEST  (-X)
+		Vector3(0.0, y, -arm),    # SOUTH (-Z)
+	]
+	for dir in arms:
+		var tip_local: Vector3 = dir
+		var sh_local := Vector3(dir.x * sf, dir.y, dir.z * sf)
+		var ctr := Vector3(0.0, y, 0.0)
+		part_visuals[_idx].append(_add_cylinder(root, ctr, sh_local, r, SHEATH, 0.0, 0.7))
+		part_visuals[_idx].append(_add_cylinder(root, sh_local, tip_local, r * 0.45, COPPER, 0.8, 0.3))
+
+	# Center sphere (small box approximation)
+	var sphere_mi := MeshInstance3D.new()
+	sphere_mi.mesh = _make_box_mesh(Vector3(r * 2.5, r * 2.5, r * 2.5), SHEATH, 0.0, 0.7)
 	sphere_mi.position = Vector3(0.0, y, 0.0)
 	root.add_child(sphere_mi)
 	part_visuals[_idx].append(sphere_mi)

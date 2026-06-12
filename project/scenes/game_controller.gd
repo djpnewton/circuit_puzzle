@@ -9,11 +9,11 @@ extends Node3D
 const GRID_W: int = 5
 const GRID_D: int = 5
 const BLOCK_SIZE: float = 1.0
-const MAX_PARTS: int = 8
+const MAX_PARTS: int = 12
 const CELL_VOLTAGE: float = 1.5
 const LED_FORWARD_VOLTAGE: float = 1.8
 
-enum PartType { CELL, WIRE_STRAIGHT, WIRE_CORNER, LED }
+enum PartType { CELL, WIRE_STRAIGHT, WIRE_CORNER, LED, WIRE_T }
 enum Orientation { ROT0, ROT90, ROT180, ROT270 }
 enum Dir { EAST, WEST, NORTH, SOUTH }
 
@@ -58,13 +58,16 @@ static func rotate_dir(d: int, o: int) -> int:
 	return Dir.SOUTH
 
 static func connect_dirs(kind: int, o: int) -> Array[int]:
-	var canon: Array[int]
+	var result: Array[int] = []
 	match kind:
 		PartType.CELL, PartType.WIRE_STRAIGHT, PartType.LED:
-			canon = [Dir.EAST, Dir.WEST]
+			result = [rotate_dir(Dir.EAST, o), rotate_dir(Dir.WEST, o)]
 		PartType.WIRE_CORNER:
-			canon = [Dir.WEST, Dir.NORTH]
-	return [rotate_dir(canon[0], o), rotate_dir(canon[1], o)]
+			result = [rotate_dir(Dir.WEST, o), rotate_dir(Dir.NORTH, o)]
+		PartType.WIRE_T:
+			# T-junction: crossbar EAST-WEST, stem SOUTH (opening faces NORTH)
+			result = [rotate_dir(Dir.EAST, o), rotate_dir(Dir.WEST, o), rotate_dir(Dir.SOUTH, o)]
+	return result
 
 static func battery_plus_dir(o: int) -> int:
 	return rotate_dir(Dir.EAST, o)
@@ -75,19 +78,107 @@ static func part_name(kind: int) -> String:
 		PartType.WIRE_STRAIGHT: return "Wire (straight)"
 		PartType.WIRE_CORNER:   return "Wire (corner)"
 		PartType.LED:           return "LED"
+		PartType.WIRE_T:        return "Wire (T-junction)"
 	return "???"
 
 static func part_description(kind: int) -> String:
 	match kind:
 		PartType.CELL:
 			return "Just like an AA battery, provides electrical current. Current flows from + to - terminal. Provides 1.5 volts of potential difference."
-		PartType.WIRE_STRAIGHT, PartType.WIRE_CORNER:
+		PartType.WIRE_STRAIGHT, PartType.WIRE_CORNER, PartType.WIRE_T:
 			return "Conducts current using a low resistance metal like copper. Infinite conductivity in this simulation, so no voltage drop across wires."
 		PartType.LED:
 			return "Light Emitting Diode. Lights up when current flows through it in the correct direction. Current must enter the anode (A) and exit the cathode (K). A diode is a one-way valve for current. A red LED requires about 1.8 volts to activate."
 	return ""
 
+# - Level system -----------------------------------------------------------------
+
+static func level_count() -> int:
+	return 2
+
+static func level_name(level: int) -> String:
+	match level:
+		0:  return "Level 1: Light it up"
+		1:  return "Level 2: Parallel lights"
+	return "???"
+
+static func level_description(level: int) -> String:
+	match level:
+		0:  return "Arrange the components to light up the LED. You need a closed loop with at least one cell (battery) and the LED must be oriented correctly."
+		1:  return "Two LEDs in parallel! Use the T-junction (3-way splitter) to split current between two LEDs. Each LED gets the full 3.0V from two cells."
+	return ""
+
+# Returns the part indices that must have `powered == true` for level completion.
+static func level_targets(level: int) -> Array[int]:
+	match level:
+		0:  return [7]   # single LED at index 7
+		1:  return [1, 5] # two LEDs at indices 1 and 5 (parallel branches)
+	return []
+
 # - Circuit simulation ----------------------------------
+
+# After the main BFS, verify that an LED's exit path (cathode port) leads to the battery.
+static func _led_exit_reaches_battery(
+	led_idx: int,
+	kinds: Array[int],
+	orients: Array[int],
+	positions: Array[Vector3],
+	batt: int,
+	bm: int,
+	n: int,
+) -> bool:
+	# Follow the LED's cathode port forward
+	var led_ports := connect_dirs(kinds[led_idx], orients[led_idx])
+	var exit_dir := led_ports[1]  # cathode = port[1]
+
+	var visited: Array[bool] = []
+	visited.resize(MAX_PARTS)
+
+	var queue: Array[int] = [led_idx]
+	var q_exit: Array[int] = [exit_dir]
+	var qh := 0
+
+	while qh < queue.size():
+		var cur := queue[qh]
+		var cur_exit := q_exit[qh]
+		qh += 1
+
+		var cur_pos := Vector2i(int(round(positions[cur].x)), int(round(positions[cur].z)))
+		var nd := dir_delta(cur_exit)
+		var nb_pos := Vector2i(cur_pos.x + nd.x, cur_pos.y + nd.y)
+
+		# Find neighbour
+		var nb := -1
+		for j in n:
+			if kinds[j] < 0 or visited[j]:
+				continue
+			var jpos := Vector2i(int(round(positions[j].x)), int(round(positions[j].z)))
+			if jpos == nb_pos:
+				nb = j
+				break
+		if nb < 0:
+			continue  # dead end — LED's exit path is broken
+
+		var arr_dir := opposite(cur_exit)
+		var nb_ports := connect_dirs(kinds[nb], orients[nb])
+		if not arr_dir in nb_ports:
+			continue
+
+		# Reached battery's return side?
+		if nb == batt and arr_dir == bm:
+			return true
+
+		visited[nb] = true
+
+		# Propagate through other ports
+		for pd in nb_ports:
+			if pd == arr_dir:
+				continue
+			queue.append(nb)
+			q_exit.append(pd)
+
+	return false
+
 
 static func simulate_circuit(
 	kinds: Array[int],
@@ -103,18 +194,11 @@ static func simulate_circuit(
 		volts_in[i] = 0.0
 		drop[i] = 0.0
 
-	# Grid positions
-	var grid: Array[Vector2i] = []
-	grid.resize(MAX_PARTS)
-	for i in n:
-		grid[i] = Vector2i(
-			int(round(positions[i].x)),
-			int(round(positions[i].z)),
-		)
-
-	# Find first battery
+	# Find first battery (skip invalid parts)
 	var batt := -1
 	for i in n:
+		if kinds[i] < 0:
+			continue
 		if kinds[i] == PartType.CELL:
 			batt = i
 			break
@@ -155,14 +239,23 @@ static func simulate_circuit(
 		var cur_volt := queue_volt[qhead]
 		qhead += 1
 
-		var my_gpos := grid[cur_idx]
+		var my_gpos := Vector2i(
+			int(round(positions[cur_idx].x)),
+			int(round(positions[cur_idx].z)),
+		)
 		var dd := dir_delta(cur_exit)
 		var nb_gpos := Vector2i(my_gpos.x + dd.x, my_gpos.y + dd.y)
 
-		# Find neighbour
+		# Find neighbour (skip invalid parts)
 		var nb := -1
 		for j in n:
-			if grid[j] == nb_gpos:
+			if kinds[j] < 0:
+				continue
+			var j_gpos := Vector2i(
+				int(round(positions[j].x)),
+				int(round(positions[j].z)),
+			)
+			if j_gpos == nb_gpos:
 				nb = j
 				break
 		if nb < 0:
@@ -171,7 +264,7 @@ static func simulate_circuit(
 		var arr_dir := opposite(cur_exit)
 		var nb_ports := connect_dirs(kinds[nb], orients[nb])
 
-		if nb_ports[0] != arr_dir and nb_ports[1] != arr_dir:
+		if not arr_dir in nb_ports:
 			continue
 
 		var vk := nb * 4 + int(arr_dir)
@@ -209,7 +302,7 @@ static func simulate_circuit(
 				continue
 			pwr[nb] = true
 
-		# Propagate through other port
+		# Propagate through other ports
 		for pd in nb_ports:
 			if pd == arr_dir:
 				continue
@@ -217,8 +310,13 @@ static func simulate_circuit(
 			queue_exit.append(pd)
 			queue_volt.append(v_out)
 
-	# If circuit not closed, LEDs and stats (except cell EMF) are reset
-	if not circuit_closed:
+	# After BFS: verify each powered LED's exit path independently closes
+	if circuit_closed:
+		for i in n:
+			if kinds[i] == PartType.LED and pwr[i]:
+				if not _led_exit_reaches_battery(i, kinds, orients, positions, batt, bm, n):
+					pwr[i] = false
+	else:
 		for i in n:
 			pwr[i] = false
 			if kinds[i] != PartType.CELL:
@@ -228,7 +326,9 @@ static func simulate_circuit(
 # - Node references ----------------------------------------------------------
 
 var camera: Camera3D
-@onready var led_model_root: Node3D = get_node_or_null("led_top")
+
+const LED_TOP_SCENE = preload("res://resources/models/LED/led_top.glb")
+var led_models: Array[Node3D] = []
 var led_lights: Array[OmniLight3D] = []
 
 # - Camera state --------------------------------------------------------------
@@ -250,7 +350,12 @@ var mouse_pressed: bool = false
 var target_block: Vector3
 var target_valid: bool = false
 
-# - Part state -----------------------------------------------------------------
+# - Level state -----------------------------------------------------------------
+
+var current_level: int = 0
+var level_complete: bool = false
+
+# - Part state -------------------------------------------------------------------
 
 var part_kinds: Array[int] = []
 var part_orients: Array[int] = []
@@ -259,16 +364,9 @@ var powered: Array[bool] = []
 var stats_volts_in: Array[float] = []
 var stats_drop: Array[float] = []
 
-# - Init -----------------------------------------------------------------------
+# - Init -------------------------------------------------------------------------
 
 func _ready() -> void:
-	_init_parts()
-	_setup_camera()
-	_setup_lights()
-	# led_model_root is set via @onready
-	_simulate()
-
-func _init_parts() -> void:
 	part_kinds.resize(MAX_PARTS)
 	part_orients.resize(MAX_PARTS)
 	part_positions.resize(MAX_PARTS)
@@ -276,15 +374,138 @@ func _init_parts() -> void:
 	stats_volts_in.resize(MAX_PARTS)
 	stats_drop.resize(MAX_PARTS)
 
-	# Start with a solved closed circuit
-	part_kinds[0] = PartType.WIRE_CORNER;    part_orients[0] = Orientation.ROT90;   part_positions[0] = Vector3(0, 0, 0)
-	part_kinds[1] = PartType.WIRE_CORNER;    part_orients[1] = Orientation.ROT0;    part_positions[1] = Vector3(2, 0, 0)
-	part_kinds[2] = PartType.WIRE_CORNER;    part_orients[2] = Orientation.ROT270;  part_positions[2] = Vector3(2, 0, 2)
-	part_kinds[3] = PartType.WIRE_CORNER;    part_orients[3] = Orientation.ROT180;  part_positions[3] = Vector3(0, 0, 2)
-	part_kinds[4] = PartType.CELL;           part_orients[4] = Orientation.ROT270;  part_positions[4] = Vector3(0, 0, 1)
-	part_kinds[5] = PartType.WIRE_STRAIGHT;  part_orients[5] = Orientation.ROT0;    part_positions[5] = Vector3(1, 0, 0)
-	part_kinds[6] = PartType.CELL;           part_orients[6] = Orientation.ROT0;    part_positions[6] = Vector3(1, 0, 2)
-	part_kinds[7] = PartType.LED;            part_orients[7] = Orientation.ROT270;  part_positions[7] = Vector3(2, 0, 1)
+	_load_level(0)
+	_setup_camera()
+	_setup_lights()
+
+# - Level management -------------------------------------------------------------
+
+func _load_level(level: int) -> void:
+	current_level = level
+	level_complete = false
+	selected_part = -1
+	hovered_part = -1
+
+	match level:
+		0:  _setup_level_1()
+		1:  _setup_level_2()
+		_:  _setup_level_1()
+
+	_simulate()
+
+
+func _check_level_complete() -> bool:
+	if level_complete:
+		return true
+	var targets := level_targets(current_level)
+	if targets.is_empty():
+		return false
+	for idx in targets:
+		if idx < 0 or idx >= MAX_PARTS:
+			return false
+		if not powered[idx]:
+			return false
+	level_complete = true
+	return true
+
+
+func _advance_level() -> void:
+	var next := current_level + 1
+	if next < level_count():
+		_load_level(next)
+	else:
+		# Back to level 0 if all levels done (wrap around)
+		_load_level(0)
+
+
+static func _setup_level_template(
+	kinds: Array[int],
+	orients: Array[int],
+	positions: Array[Vector3],
+	out_kinds: Array[int],
+	out_orients: Array[int],
+	out_positions: Array[Vector3],
+) -> void:
+	for i in MAX_PARTS:
+		if i < kinds.size():
+			out_kinds[i] = kinds[i]
+			out_orients[i] = orients[i]
+			out_positions[i] = positions[i]
+		else:
+			out_kinds[i] = -1
+			out_orients[i] = 0
+			out_positions[i] = Vector3(0, 0, 0)
+
+
+func _setup_level_1() -> void:
+	var y := 0.0
+	part_kinds[0] = PartType.WIRE_CORNER;    part_orients[0] = Orientation.ROT90;   part_positions[0] = Vector3(0, y, 0)
+	part_kinds[1] = PartType.WIRE_CORNER;    part_orients[1] = Orientation.ROT0;    part_positions[1] = Vector3(2, y, 0)
+	part_kinds[2] = PartType.WIRE_CORNER;    part_orients[2] = Orientation.ROT270;  part_positions[2] = Vector3(2, y, 2)
+	part_kinds[3] = PartType.WIRE_CORNER;    part_orients[3] = Orientation.ROT180;  part_positions[3] = Vector3(0, y, 2)
+	part_kinds[4] = PartType.CELL;           part_orients[4] = Orientation.ROT270;  part_positions[4] = Vector3(0, y, 1)
+	part_kinds[5] = PartType.WIRE_STRAIGHT;  part_orients[5] = Orientation.ROT0;    part_positions[5] = Vector3(1, y, 0)
+	part_kinds[6] = PartType.CELL;           part_orients[6] = Orientation.ROT0;    part_positions[6] = Vector3(1, y, 2)
+	part_kinds[7] = PartType.LED;            part_orients[7] = Orientation.ROT270;  part_positions[7] = Vector3(3, y, 1)
+	part_kinds[8] = -1
+	part_kinds[9] = -1
+	part_kinds[10] = -1
+	part_kinds[11] = -1
+
+func _solve_level_1() -> void:
+	# Solved closed circuit: cell + cell + LED around a rectangle
+	var y := 0.0
+	part_kinds[0] = PartType.WIRE_CORNER;    part_orients[0] = Orientation.ROT90;   part_positions[0] = Vector3(0, y, 0)
+	part_kinds[1] = PartType.WIRE_CORNER;    part_orients[1] = Orientation.ROT0;    part_positions[1] = Vector3(2, y, 0)
+	part_kinds[2] = PartType.WIRE_CORNER;    part_orients[2] = Orientation.ROT270;  part_positions[2] = Vector3(2, y, 2)
+	part_kinds[3] = PartType.WIRE_CORNER;    part_orients[3] = Orientation.ROT180;  part_positions[3] = Vector3(0, y, 2)
+	part_kinds[4] = PartType.CELL;           part_orients[4] = Orientation.ROT270;  part_positions[4] = Vector3(0, y, 1)
+	part_kinds[5] = PartType.WIRE_STRAIGHT;  part_orients[5] = Orientation.ROT0;    part_positions[5] = Vector3(1, y, 0)
+	part_kinds[6] = PartType.CELL;           part_orients[6] = Orientation.ROT0;    part_positions[6] = Vector3(1, y, 2)
+	part_kinds[7] = PartType.LED;            part_orients[7] = Orientation.ROT270;  part_positions[7] = Vector3(2, y, 1)
+	part_kinds[8] = -1
+	part_kinds[9] = -1
+	part_kinds[10] = -1
+	part_kinds[11] = -1
+
+
+func _setup_level_2() -> void:
+	var y := 0.0
+	part_kinds[0] = PartType.WIRE_CORNER;   part_orients[0] = Orientation.ROT180; part_positions[0] = Vector3(0, y, 2)
+	part_kinds[1] = PartType.LED;            part_orients[1] = Orientation.ROT0;   part_positions[1] = Vector3(1, y, 2)
+	part_kinds[2] = PartType.WIRE_STRAIGHT;  part_orients[2] = Orientation.ROT0;   part_positions[2] = Vector3(2, y, 2)
+	part_kinds[3] = PartType.WIRE_CORNER;    part_orients[3] = Orientation.ROT270; part_positions[3] = Vector3(3, y, 2)
+	part_kinds[4] = PartType.WIRE_T;         part_orients[4] = Orientation.ROT270; part_positions[4] = Vector3(0, y, 1)
+	part_kinds[5] = PartType.LED;            part_orients[5] = Orientation.ROT0;   part_positions[5] = Vector3(1, y, 1)
+	part_kinds[6] = PartType.WIRE_STRAIGHT;  part_orients[6] = Orientation.ROT0;   part_positions[6] = Vector3(2, y, 1)
+	part_kinds[7] = PartType.WIRE_T;         part_orients[7] = Orientation.ROT90;  part_positions[7] = Vector3(3, y, 1)
+	part_kinds[8] = PartType.WIRE_CORNER;    part_orients[8] = Orientation.ROT90;  part_positions[8] = Vector3(0, y, 0)
+	part_kinds[9] = PartType.CELL;           part_orients[9] = Orientation.ROT0;   part_positions[9] = Vector3(1, y, 0)
+	part_kinds[10] = PartType.CELL;          part_orients[10] = Orientation.ROT0;  part_positions[10] = Vector3(2, y, 0)
+	part_kinds[11] = PartType.WIRE_CORNER;   part_orients[11] = Orientation.ROT0;  part_positions[11] = Vector3(4, y, 0)
+
+func _solve_level_2() -> void:
+	# Two cells (3.0V) -> T-junction splits to two parallel LEDs.
+	# Both LEDs receive the full 3.0V through separate branches.
+	# Each LED's exit path independently reaches the battery.
+	#
+	# ASCII layout (C=CORNER L=LED -=WIRE T=WIRE_T B=CELL):
+	#   C L - C
+	#   T L - T
+	#   C B B C
+	var y := 0.0
+	part_kinds[0] = PartType.WIRE_CORNER;   part_orients[0] = Orientation.ROT180; part_positions[0] = Vector3(0, y, 2)
+	part_kinds[1] = PartType.LED;            part_orients[1] = Orientation.ROT0;   part_positions[1] = Vector3(1, y, 2)
+	part_kinds[2] = PartType.WIRE_STRAIGHT;  part_orients[2] = Orientation.ROT0;   part_positions[2] = Vector3(2, y, 2)
+	part_kinds[3] = PartType.WIRE_CORNER;    part_orients[3] = Orientation.ROT270; part_positions[3] = Vector3(3, y, 2)
+	part_kinds[4] = PartType.WIRE_T;         part_orients[4] = Orientation.ROT270; part_positions[4] = Vector3(0, y, 1)
+	part_kinds[5] = PartType.LED;            part_orients[5] = Orientation.ROT0;   part_positions[5] = Vector3(1, y, 1)
+	part_kinds[6] = PartType.WIRE_STRAIGHT;  part_orients[6] = Orientation.ROT0;   part_positions[6] = Vector3(2, y, 1)
+	part_kinds[7] = PartType.WIRE_T;         part_orients[7] = Orientation.ROT90;  part_positions[7] = Vector3(3, y, 1)
+	part_kinds[8] = PartType.WIRE_CORNER;    part_orients[8] = Orientation.ROT90;  part_positions[8] = Vector3(0, y, 0)
+	part_kinds[9] = PartType.CELL;           part_orients[9] = Orientation.ROT0;   part_positions[9] = Vector3(1, y, 0)
+	part_kinds[10] = PartType.CELL;          part_orients[10] = Orientation.ROT0;  part_positions[10] = Vector3(2, y, 0)
+	part_kinds[11] = PartType.WIRE_CORNER;   part_orients[11] = Orientation.ROT0;  part_positions[11] = Vector3(3, y, 0)
 
 # - Camera ---------------------------------------------------------------------
 
@@ -335,9 +556,11 @@ func _setup_lights() -> void:
 	sun.rotation.x = -0.785398
 	add_child(sun)
 
-	# Per-LED omni lights
+	# Per-LED omni lights and top models
 	led_lights.resize(MAX_PARTS)
+	led_models.resize(MAX_PARTS)
 	for i in MAX_PARTS:
+		# Omni light (glow)
 		var light := OmniLight3D.new()
 		light.omni_range = 3.0
 		light.light_energy = 0.0
@@ -345,30 +568,43 @@ func _setup_lights() -> void:
 		add_child(light)
 		led_lights[i] = light
 
+		# LED top model (GLB)
+		var model := LED_TOP_SCENE.instantiate()
+		model.visible = false
+		add_child(model)
+		led_models[i] = model
+
 # - LED model ------------------------------------------------------------------
 
 func _update_led_model() -> void:
 	for i in MAX_PARTS:
-		if part_kinds[i] == PartType.LED:
-			var p := part_positions[i]
-			var top := p.y + BLOCK_SIZE * 0.12
+		# LED glow light and top model
+		if i < led_lights.size() and is_instance_valid(led_lights[i]):
+			if part_kinds[i] == PartType.LED:
+				var p := part_positions[i]
+				var top := p.y + BLOCK_SIZE * 0.12
 
-			# Position led_top GLB model (spun 180° to align with circuit direction)
-			if is_instance_valid(led_model_root):
-				var angle := float(part_orients[i]) * PI * 0.5 + PI
-				var xf_basis := Basis(Vector3.UP, angle)
-				var s: float = 0.3
-				xf_basis = xf_basis.scaled(Vector3(s, s, s))
-				var origin := Vector3(p.x, top + 0.5, p.z)
-				led_model_root.transform = Transform3D(xf_basis, origin)
+				# Position GLB model on this LED
+				if i < led_models.size() and is_instance_valid(led_models[i]):
+					var angle := float(part_orients[i]) * PI * 0.5 + PI
+					var xf_basis := Basis(Vector3.UP, angle)
+					var s: float = 0.3
+					xf_basis = xf_basis.scaled(Vector3(s, s, s))
+					var origin := Vector3(p.x, top + 0.5, p.z)
+					led_models[i].transform = Transform3D(xf_basis, origin)
+					led_models[i].visible = true
 
-			# LED glow light
-			if i < led_lights.size() and is_instance_valid(led_lights[i]):
+				# Glow light
 				if powered[i]:
 					led_lights[i].position = Vector3(p.x, p.y + 0.6, p.z)
 					led_lights[i].light_energy = 4.0
 				else:
 					led_lights[i].light_energy = 0.0
+			else:
+				# Not an LED — hide the model
+				if i < led_models.size() and is_instance_valid(led_models[i]):
+					led_models[i].visible = false
+				led_lights[i].light_energy = 0.0
 
 # - Circuit simulation wrapper ------------------------------------------------
 
@@ -381,6 +617,7 @@ func _process(delta: float) -> void:
 	_handle_camera_keys(delta)
 	_update_camera_transform()
 	_update_led_model()
+	_check_level_complete()
 	_write_meta()
 
 # - Meta writing (for GDScript UI and BoardRenderer) --------------------------
@@ -416,6 +653,13 @@ func _write_meta() -> void:
 		set_meta("_part_orient_%d" % i, part_orients[i])
 		set_meta("_part_powered_%d" % i, powered[i])
 
+	# Level info
+	set_meta("_level_current", current_level)
+	set_meta("_level_count", level_count())
+	set_meta("_level_name", level_name(current_level))
+	set_meta("_level_complete", level_complete)
+	set_meta("_level_targets", level_targets(current_level))
+
 	# Handle action triggers from UI
 	var act_rotate: bool = get_meta("_action_rotate", false)
 	if act_rotate:
@@ -426,6 +670,11 @@ func _write_meta() -> void:
 	if act_solve:
 		remove_meta("_action_solve")
 		_debug_solve()
+
+	var act_next: bool = get_meta("_action_next_level", false)
+	if act_next:
+		remove_meta("_action_next_level")
+		_advance_level()
 
 # - Part interaction -----------------------------------------------------------
 
@@ -440,15 +689,11 @@ func _rotate_selected() -> void:
 		_simulate()
 
 func _debug_solve() -> void:
-	var y: float = 0.0
-	part_kinds[0] = PartType.WIRE_CORNER;    part_orients[0] = Orientation.ROT90;   part_positions[0] = Vector3(0, y, 0)
-	part_kinds[1] = PartType.WIRE_CORNER;    part_orients[1] = Orientation.ROT0;    part_positions[1] = Vector3(2, y, 0)
-	part_kinds[2] = PartType.WIRE_CORNER;    part_orients[2] = Orientation.ROT270;  part_positions[2] = Vector3(2, y, 2)
-	part_kinds[3] = PartType.WIRE_CORNER;    part_orients[3] = Orientation.ROT180;  part_positions[3] = Vector3(0, y, 2)
-	part_kinds[4] = PartType.CELL;           part_orients[4] = Orientation.ROT270;  part_positions[4] = Vector3(0, y, 1)
-	part_kinds[5] = PartType.WIRE_STRAIGHT;  part_orients[5] = Orientation.ROT0;    part_positions[5] = Vector3(1, y, 0)
-	part_kinds[6] = PartType.CELL;           part_orients[6] = Orientation.ROT0;    part_positions[6] = Vector3(1, y, 2)
-	part_kinds[7] = PartType.LED;            part_orients[7] = Orientation.ROT270;  part_positions[7] = Vector3(2, y, 1)
+	# Reload the current level's intended solution
+	match current_level:
+		0:  _solve_level_1()
+		1:  _solve_level_2()
+		_:  _solve_level_1()
 	_simulate()
 
 func _is_occupied(ignore_idx: int, pos: Vector3) -> bool:
