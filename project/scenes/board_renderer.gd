@@ -228,6 +228,10 @@ func _rebuild_all_parts() -> void:
 
 func _rebuild_part(idx: int, kind: int, orient: int, powered: bool) -> void:
 	_clear_part_visuals(idx)
+
+	if kind < 0:
+		return
+
 	var root := part_roots[idx]
 	var pos := cur_positions[idx]
 

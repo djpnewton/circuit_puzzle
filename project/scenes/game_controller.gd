@@ -504,10 +504,10 @@ func _setup_level_1() -> void:
 	part_kinds[5] = PartType.WIRE_STRAIGHT;  part_orients[5] = Orientation.ROT0;    part_positions[5] = Vector3(1, y, 0)
 	part_kinds[6] = PartType.CELL;           part_orients[6] = Orientation.ROT0;    part_positions[6] = Vector3(1, y, 2)
 	part_kinds[7] = PartType.LED;            part_orients[7] = Orientation.ROT270;  part_positions[7] = Vector3(3, y, 1)
-	part_kinds[8] = -1
-	part_kinds[9] = -1
-	part_kinds[10] = -1
-	part_kinds[11] = -1
+	for i in range(8, MAX_PARTS):
+		part_kinds[i] = -1
+		part_orients[i] = 0
+		part_positions[i] = Vector3.ZERO
 
 func _solve_level_1() -> void:
 	# Solved closed circuit: cell + cell + LED around a rectangle
@@ -520,10 +520,10 @@ func _solve_level_1() -> void:
 	part_kinds[5] = PartType.WIRE_STRAIGHT;  part_orients[5] = Orientation.ROT0;    part_positions[5] = Vector3(1, y, 0)
 	part_kinds[6] = PartType.CELL;           part_orients[6] = Orientation.ROT0;    part_positions[6] = Vector3(1, y, 2)
 	part_kinds[7] = PartType.LED;            part_orients[7] = Orientation.ROT270;  part_positions[7] = Vector3(2, y, 1)
-	part_kinds[8] = -1
-	part_kinds[9] = -1
-	part_kinds[10] = -1
-	part_kinds[11] = -1
+	for i in range(8, MAX_PARTS):
+		part_kinds[i] = -1
+		part_orients[i] = 0
+		part_positions[i] = Vector3.ZERO
 
 
 func _setup_level_2() -> void:
