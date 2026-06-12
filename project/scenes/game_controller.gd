@@ -676,6 +676,11 @@ func _write_meta() -> void:
 		remove_meta("_action_next_level")
 		_advance_level()
 
+	var act_save: bool = get_meta("_action_save", false)
+	if act_save:
+		remove_meta("_action_save")
+		_save_to_json()
+
 # - Part interaction -----------------------------------------------------------
 
 func _rotate_selected() -> void:
@@ -695,6 +700,54 @@ func _debug_solve() -> void:
 		1:  _solve_level_2()
 		_:  _solve_level_1()
 	_simulate()
+
+# - JSON save -----------------------------------------------------------------
+
+func _save_to_json() -> void:
+	var parts: Array[Dictionary] = []
+	for i in MAX_PARTS:
+		if part_kinds[i] < 0:
+			continue
+		var kind_name: String = ""
+		match part_kinds[i]:
+			PartType.CELL:          kind_name = "CELL"
+			PartType.WIRE_STRAIGHT: kind_name = "WIRE_STRAIGHT"
+			PartType.WIRE_CORNER:   kind_name = "WIRE_CORNER"
+			PartType.LED:           kind_name = "LED"
+			PartType.WIRE_T:        kind_name = "WIRE_T"
+
+		var orient_name: String = ""
+		match part_orients[i]:
+			Orientation.ROT0:   orient_name = "ROT0"
+			Orientation.ROT90:  orient_name = "ROT90"
+			Orientation.ROT180: orient_name = "ROT180"
+			Orientation.ROT270: orient_name = "ROT270"
+
+		parts.append({
+			"kind": kind_name,
+			"orient": orient_name,
+			"x": part_positions[i].x,
+			"z": part_positions[i].z,
+		})
+
+	var data: Dictionary = {
+		"level": level_name(current_level),
+		"parts": parts,
+	}
+
+	var json_str: String = JSON.stringify(data, "\t")
+	var time_str: String = Time.get_datetime_string_from_system(false, true).replace("-", "").replace(":", "")
+	var path: String = "user://circuit_%s.json" % time_str
+	var abs_path: String = ProjectSettings.globalize_path(path)
+
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file:
+		file.store_string(json_str)
+		file.close()
+		print("Saved circuit to: ", abs_path)
+	else:
+		push_error("Failed to save circuit to: ", abs_path)
+
 
 func _is_occupied(ignore_idx: int, pos: Vector3) -> bool:
 	for i in MAX_PARTS:

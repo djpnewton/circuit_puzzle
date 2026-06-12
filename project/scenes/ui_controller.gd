@@ -10,6 +10,7 @@ var stats_drop_label: Label
 var info_btn: Panel
 var rotate_btn: Panel
 var solve_btn: Panel
+var save_btn: Panel
 var modal_overlay: ColorRect
 var modal_title: Label
 var modal_desc: Label
@@ -46,6 +47,7 @@ func setup_ui() -> void:
 	_create_info_button()
 	_create_rotate_button()
 	_create_solve_button()
+	_create_save_button()
 	_create_modal()
 	_create_level_ui()
 
@@ -302,11 +304,43 @@ func _on_rotate_clicked(event: InputEvent) -> void:
 	get_parent().set_meta("_action_rotate", true)
 
 
+func _create_save_button() -> void:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.2, 0.2, 0.35, 1.0)
+	style.border_color = Color(0.15, 0.15, 0.25, 1.0)
+	style.border_width_left = 2
+	style.border_width_right = 2
+	style.border_width_top = 2
+	style.border_width_bottom = 2
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+
+	save_btn = Panel.new()
+	save_btn.position = Vector2(-210, -72)
+	save_btn.size = Vector2(80, 36)
+	save_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	save_btn.add_theme_stylebox_override("panel", style)
+	save_btn.gui_input.connect(_on_save_clicked)
+	save_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT, true)
+	ui_layer.add_child(save_btn)
+
+	_add_label(save_btn, "SAVE", 17)
+
+
 func _on_solve_clicked(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton and event.pressed):
 		return
 	print("Solve clicked")
 	get_parent().set_meta("_action_solve", true)
+
+
+func _on_save_clicked(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	print("Save clicked")
+	get_parent().set_meta("_action_save", true)
 
 
 func _on_modal_dismiss(event: InputEvent) -> void:
