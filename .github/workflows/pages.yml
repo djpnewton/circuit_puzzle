@@ -20,35 +20,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mlugg/setup-zig@v2
+      - name: Setup Godot 4
+        uses: chickensoft-games/setup-godot@v2
         with:
-          version: "0.16.0"
+          version: "4.6.3"
+          use-dotnet: false
+          # Include web export templates (they ship separately from the editor)
+          include-templates: true
 
-      - name: Patch Zig 0.16.0 emscripten stdlib bug (STOPSIG wrong return type)
+      - name: Export Web release
         run: |
-          ZIG_STD_DIR="$(dirname $(which zig))/lib/std"
-          sed -i 's/pub fn STOPSIG(s: u32) u32/pub fn STOPSIG(s: u32) SIG/' "$ZIG_STD_DIR/os/emscripten.zig"
+          mkdir -p build/web
+          godot --headless --export-release "Web" --path ./project ../build/web/index.html
 
-      - name: Cache Zig packages and emsdk
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/zig
-          key: zig-${{ hashFiles('build.zig.zon') }}
-          restore-keys: zig-
-
-      - name: Build for web
-        run: zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast
-
-      - name: Cache-bust JS reference in HTML
-        run: sed -i "s/circuit_puzzle\.js/circuit_puzzle.js?v=$(date -u +%Y%m%d%H%M%S)/g" zig-out/web/circuit_puzzle.html
-
-      - name: copy to index.html
-        run: cp zig-out/web/circuit_puzzle.html zig-out/web/index.html
+      - name: Cache-bust Godot assets in HTML
+        run: |
+          # Add cache-busting query strings to .wasm and .pck references in the HTML
+          TS=$(date -u +%Y%m%d%H%M%S)
+          sed -i "s/\(index\.wasm\)/\1?v=$TS/g" build/web/index.html
+          sed -i "s/\(index\.pck\)/\1?v=$TS/g" build/web/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: zig-out/web
+          path: build/web
 
   deploy:
     needs: build
