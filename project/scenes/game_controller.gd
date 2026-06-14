@@ -91,6 +91,16 @@ static func part_description(kind: int) -> String:
 			return "Light Emitting Diode. Lights up when current flows through it in the correct direction. Current must enter the anode (A) and exit the cathode (K). A diode is a one-way valve for current. A red LED requires about 1.8 volts to activate."
 	return ""
 
+# Returns the bounding box half-extents for each part type (in local unrotated space).
+static func part_half_extents(kind: int) -> Vector3:
+	match kind:
+		PartType.CELL:          return Vector3(0.45, 0.30, 0.30)
+		PartType.WIRE_STRAIGHT: return Vector3(0.50, 0.10, 0.45)
+		PartType.WIRE_CORNER:   return Vector3(0.45, 0.10, 0.45)
+		PartType.WIRE_T:        return Vector3(0.50, 0.10, 0.45)
+		PartType.LED:           return Vector3(0.45, 0.60, 0.45)
+	return Vector3(0.50, 0.50, 0.50)
+
 # - Level system -----------------------------------------------------------------
 
 static func level_count() -> int:
@@ -406,6 +416,8 @@ var last_mouse_pos: Vector2
 var mouse_pressed: bool = false
 var target_block: Vector3
 var target_valid: bool = false
+var drag_target: Vector3 = Vector3.ZERO
+var drag_target_valid: bool = false
 
 # - Level state -----------------------------------------------------------------
 
@@ -704,6 +716,18 @@ func _write_meta() -> void:
 	else:
 		remove_meta("_target_block")
 
+	# Ghost part data (for drag preview)
+	if dragging >= 0 and drag_target != Vector3.ZERO:
+		set_meta("_ghost_part_pos", drag_target)
+		set_meta("_ghost_part_kind", part_kinds[dragging])
+		set_meta("_ghost_part_orient", part_orients[dragging])
+		set_meta("_ghost_valid", drag_target_valid)
+	else:
+		remove_meta("_ghost_part_pos")
+		remove_meta("_ghost_part_kind")
+		remove_meta("_ghost_part_orient")
+		remove_meta("_ghost_valid")
+
 	for i in MAX_PARTS:
 		set_meta("_part_pos_%d" % i, part_positions[i])
 		set_meta("_part_kind_%d" % i, part_kinds[i])
@@ -893,15 +917,26 @@ func _on_pointer_released(screen_pos: Vector2) -> void:
 	mouse_pressed = false
 	target_block = Vector3.ZERO
 	if dragging >= 0:
-		var target := _screen_raycast_terrain(screen_pos)
-		if target != null:
-			if not _is_occupied(dragging, target):
-				part_positions[dragging] = target
+		# Use the stored drag_target (ghost position) for final placement
+		if drag_target != Vector3.ZERO:
+			if not _is_occupied(dragging, drag_target):
+				part_positions[dragging] = drag_target
 				_simulate()
 			else:
 				part_positions[dragging] = drag_origin
 		else:
-			part_positions[dragging] = drag_origin
+			# Fallback: raycast again at release point
+			var target := _screen_raycast_terrain(screen_pos)
+			if target != null:
+				if not _is_occupied(dragging, target):
+					part_positions[dragging] = target
+					_simulate()
+				else:
+					part_positions[dragging] = drag_origin
+			else:
+				part_positions[dragging] = drag_origin
+		drag_target = Vector3.ZERO
+		drag_target_valid = false
 		dragging = -1
 	camera_drag_active = false
 
@@ -909,9 +944,11 @@ func _on_pointer_drag(screen_pos: Vector2) -> void:
 	if dragging >= 0:
 		var target := _screen_raycast_terrain(screen_pos)
 		if target != null:
-			part_positions[dragging] = target
+			# Store ghost position but DON'T move actual part
+			drag_target = target
+			drag_target_valid = not _is_occupied(dragging, target)
 			target_block = target
-			target_valid = not _is_occupied(dragging, target)
+			target_valid = drag_target_valid
 
 # - Raycasting -----------------------------------------------------------------
 
@@ -922,11 +959,14 @@ func _screen_raycast_parts(screen_pos: Vector2) -> int:
 	var result: int = -1
 
 	for i in MAX_PARTS:
+		var kind := part_kinds[i]
+		if kind < 0:
+			continue
 		var p := part_positions[i]
-		var half: float = BLOCK_SIZE * 0.5
-		var dist := _ray_aabb(from, dir,
-			Vector3(p.x - half, p.y, p.z - half),
-			Vector3(p.x + half, p.y + BLOCK_SIZE, p.z + half))
+		var he := part_half_extents(kind)
+		var angle := float(part_orients[i]) * TAU / 4.0
+		var b := Basis(Vector3.UP, angle)
+		var dist := _ray_obb(from, dir, p + Vector3(0.0, he.y, 0.0), he, b)
 		if dist >= 0 and dist < best_dist:
 			best_dist = dist
 			result = i
@@ -969,3 +1009,10 @@ static func _ray_aabb(origin: Vector3, dir: Vector3, mn: Vector3, mx: Vector3) -
 	if tmax < 0 or tmin > tmax:
 		return -1.0
 	return tmin if tmin >= 0 else tmax
+
+# Ray vs Oriented Bounding Box test.
+# Transforms the ray into the OBB's local space, then does an AABB test.
+static func _ray_obb(origin: Vector3, dir: Vector3, center: Vector3, half_extents: Vector3, obb_basis: Basis) -> float:
+	var local_origin := obb_basis.inverse() * (origin - center)
+	var local_dir := obb_basis.inverse() * dir
+	return _ray_aabb(local_origin, local_dir, -half_extents, half_extents)

@@ -24,6 +24,8 @@ const SELECT_CLR  := Color(0.863, 0.941, 1.0, 1.0)
 const TARGET_VALID   := Color(0.3, 0.9, 0.3, 0.5)
 const TARGET_INVALID := Color(0.9, 0.3, 0.3, 0.5)
 
+const LED_TOP_SCENE = preload("res://resources/models/LED/led_top.glb")
+
 # -- Node references --------------------------------------------------------
 var game_node: Node
 
@@ -31,6 +33,7 @@ var terrain_container: Node3D
 var parts_container: Node3D
 var highlights_container: Node3D
 var target_container: Node3D
+var ghost_container: Node3D
 
 # Per-grid-cell terrain blocks
 var terrain_blocks: Array[MeshInstance3D] = []
@@ -64,6 +67,14 @@ var cur_powered: Array[bool] = []
 var cur_selected: int = -1
 var cur_hovered: int = -1
 
+# Ghost part state (drag preview)
+var ghost_active: bool = false
+var ghost_pos: Vector3 = Vector3.ZERO
+var ghost_kind: int = -1
+var ghost_orient: int = 0
+var ghost_valid: bool = false
+var prev_ghost_active: bool = false
+
 # -- Lifecycle --------------------------------------------------------------
 
 func _ready() -> void:
@@ -73,6 +84,7 @@ func _ready() -> void:
 	_build_part_nodes()
 	_build_highlights()
 	_build_target_highlight()
+	_build_ghost_container()
 
 	glow_materials.resize(part_count)
 
@@ -100,6 +112,7 @@ func _process(_delta: float) -> void:
 	_update_terrain_visibility()
 	_update_parts()
 	_update_highlights()
+	_update_ghost()
 
 
 # -- Data reading ----------------------------------------------------------
@@ -140,6 +153,14 @@ func _read_state() -> void:
 		cur_kinds[i] = game_node.get_meta(kind_key, -1)
 		cur_orients[i] = game_node.get_meta(orient_key, 0)
 		cur_powered[i] = game_node.get_meta(powered_key, false)
+
+	# Ghost state
+	ghost_active = game_node.has_meta("_ghost_part_pos")
+	if ghost_active:
+		ghost_pos = game_node.get_meta("_ghost_part_pos", Vector3.ZERO)
+		ghost_kind = game_node.get_meta("_ghost_part_kind", -1)
+		ghost_orient = game_node.get_meta("_ghost_part_orient", 0)
+		ghost_valid = game_node.get_meta("_ghost_valid", false)
 
 
 # -- Terrain building ------------------------------------------------------
@@ -608,52 +629,263 @@ func _make_wireframe_box_mesh(size: Vector3, color: Color) -> ArrayMesh:
 
 
 func _update_highlights() -> void:
-	# Hover highlight
+	# Hover highlight (uses per-part bounding box)
 	if cur_hovered >= 0 and cur_hovered < part_count and cur_hovered != cur_selected:
 		var pos := cur_positions[cur_hovered]
-		var s := block_size
-		_hover_highlight_at(pos, s)
+		var kind := cur_kinds[cur_hovered]
+		var he: Vector3 = game_node.part_half_extents(kind)
+		_hover_highlight_at(pos, he)
 	else:
 		if is_instance_valid(hover_highlight):
 			hover_highlight.visible = false
 
-	# Selection highlight
+	# Selection highlight (uses per-part bounding box)
 	if cur_selected >= 0 and cur_selected < part_count:
 		var pos := cur_positions[cur_selected]
-		var s := block_size
-		_select_highlight_at(pos, s)
+		var kind := cur_kinds[cur_selected]
+		var he: Vector3 = game_node.part_half_extents(kind)
+		_select_highlight_at(pos, he)
 	else:
 		if is_instance_valid(select_highlight):
 			select_highlight.visible = false
 
-	# Target highlight (read target from meta - or check if any part is being dragged)
+	# Target highlight (matches ghost part's bounding box)
 	var target_pos: Variant = game_node.get_meta("_target_block", null) if game_node.has_meta("_target_block") else null
 	if target_pos != null:
-		var s := block_size
+		var target_kind: int = game_node.get_meta("_ghost_part_kind", -1)
+		var he: Vector3 = game_node.part_half_extents(target_kind) if target_kind >= 0 else Vector3(block_size * 0.5, block_size * 0.5, block_size * 0.5)
 		var valid: bool = game_node.get_meta("_target_valid", false)
-		_show_target_at(target_pos, s, valid)
+		_show_target_at(target_pos, he, valid)
 	else:
 		if is_instance_valid(target_highlight):
 			target_highlight.visible = false
 
 
-func _position_highlight_at(mi: MeshInstance3D, pos: Vector3, s: float, color: Color) -> void:
+func _position_highlight_at(mi: MeshInstance3D, pos: Vector3, he: Vector3, color: Color) -> void:
 	if not is_instance_valid(mi):
 		return
 	var margin := 0.04
-	var wire_size := Vector3(s + margin * 2, s + margin * 2, s + margin * 2)
+	var wire_size := (he + Vector3(margin, margin, margin)) * 2.0
 	mi.mesh = _make_wireframe_box_mesh(wire_size, color)
-	mi.position = Vector3(pos.x, pos.y + s * 0.5, pos.z)
+	mi.position = Vector3(pos.x, pos.y + he.y, pos.z)
 	mi.visible = true
 
 
-func _hover_highlight_at(pos: Vector3, s: float) -> void:
-	_position_highlight_at(hover_highlight, pos, s, HOVER_CLR)
+func _hover_highlight_at(pos: Vector3, he: Vector3) -> void:
+	_position_highlight_at(hover_highlight, pos, he, HOVER_CLR)
 
 
-func _select_highlight_at(pos: Vector3, s: float) -> void:
-	_position_highlight_at(select_highlight, pos, s, SELECT_CLR)
+func _select_highlight_at(pos: Vector3, he: Vector3) -> void:
+	_position_highlight_at(select_highlight, pos, he, SELECT_CLR)
 
 
-func _show_target_at(pos: Vector3, s: float, valid: bool) -> void:
-	_position_highlight_at(target_highlight, pos, s, TARGET_VALID if valid else TARGET_INVALID)
+func _show_target_at(pos: Vector3, he: Vector3, valid: bool) -> void:
+	_position_highlight_at(target_highlight, pos, he, TARGET_VALID if valid else TARGET_INVALID)
+
+
+# -- Ghost part (drag preview) ---------------------------------------------
+
+func _build_ghost_container() -> void:
+	ghost_container = Node3D.new()
+	ghost_container.name = "GhostPart"
+	add_child(ghost_container)
+
+
+func _clear_ghost() -> void:
+	for child in ghost_container.get_children():
+		child.queue_free()
+	ghost_container.visible = false
+	prev_ghost_active = false
+
+
+func _make_ghost_material(albedo: Color, metallic: float = 0.0, roughness: float = 0.8) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = albedo
+	mat.albedo_color.a = 0.45
+	mat.metallic = metallic
+	mat.roughness = roughness
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return mat
+
+
+func _build_ghost() -> void:
+	_clear_ghost()
+	if not ghost_active or ghost_kind < 0:
+		return
+
+	var root := ghost_container
+	var pos := ghost_pos
+	var angle := float(ghost_orient) * TAU / 4.0
+	root.position = Vector3(pos.x, 0.0, pos.z)
+	root.rotation = Vector3(0.0, angle, 0.0)
+
+	var top_y := _platform_top(pos)
+	var s := block_size
+
+	# Ghost platform (semi-transparent)
+	var platform_mi := MeshInstance3D.new()
+	var thickness := s * 0.1
+	var r := s * 0.44
+	var base_mesh := CylinderMesh.new()
+	base_mesh.top_radius = r
+	base_mesh.bottom_radius = r
+	base_mesh.height = thickness
+	var ghost_platform_color := PLATFORM_CLR.lerp(Color(0.5, 0.9, 0.5, 1.0), 0.3) if ghost_valid else PLATFORM_CLR.lerp(Color(1.0, 0.3, 0.3, 1.0), 0.3)
+	base_mesh.material = _make_ghost_material(ghost_platform_color, 0.15, 0.55)
+	platform_mi.mesh = base_mesh
+	platform_mi.position = Vector3(0.0, top_y - thickness * 0.5, 0.0)
+	root.add_child(platform_mi)
+
+	# Ghost part body
+	match ghost_kind:
+		0:  _build_ghost_cell(root, top_y, s)
+		1:  _build_ghost_wire_straight(root, top_y, s)
+		2:  _build_ghost_wire_corner(root, top_y, s)
+		3:  _build_ghost_led(root, top_y, s)
+		4:  _build_ghost_wire_t(root, top_y, s)
+
+	ghost_container.visible = true
+
+
+func _ghost_add_cylinder(parent: Node3D, pos_a: Vector3, pos_b: Vector3, radius: float, color: Color, metallic: float = 0.0, roughness: float = 0.8) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var dx := pos_b.x - pos_a.x
+	var dy := pos_b.y - pos_a.y
+	var dz := pos_b.z - pos_a.z
+	var l := sqrt(dx * dx + dy * dy + dz * dz)
+	if l < 0.001:
+		return mi
+
+	mi.mesh = _make_cylinder_mesh(radius, l, color, metallic, roughness)
+	mi.mesh.material = _make_ghost_material(color, metallic, roughness)
+
+	var mid := (pos_a + pos_b) * 0.5
+	mi.position = mid
+
+	var axis := Vector3(dx, dy, dz).normalized()
+	if axis.distance_squared_to(Vector3.UP) > 0.001:
+		var rot := Quaternion(Vector3.UP, axis)
+		mi.quaternion = rot
+	elif axis.y < 0:
+		mi.quaternion = Quaternion(Vector3.UP, Vector3.DOWN)
+
+	parent.add_child(mi)
+	return mi
+
+
+func _build_ghost_cell(root: Node3D, top_y: float, s: float) -> void:
+	var r := s * 0.18
+	var y := top_y + r
+	var neg_end := Vector3(-s * 0.4, y, 0.0)
+	var split_pt := Vector3(s * 0.18, y, 0.0)
+	var pos_end := Vector3(s * 0.4, y, 0.0)
+	var nub_end := Vector3(s * 0.47, y, 0.0)
+	var cap_start := Vector3(-s * 0.42, y, 0.0)
+	_ghost_add_cylinder(root, neg_end, split_pt, r, BLACK, 0.2, 0.6)
+	_ghost_add_cylinder(root, split_pt, pos_end, r, COPPER, 0.8, 0.3)
+	_ghost_add_cylinder(root, pos_end, nub_end, r * 0.45, METAL, 0.9, 0.2)
+	_ghost_add_cylinder(root, cap_start, neg_end, r * 1.02, METAL, 0.9, 0.2)
+
+
+func _build_ghost_wire_straight(root: Node3D, top_y: float, s: float) -> void:
+	var r := s * 0.08
+	var y := top_y + r
+	var left := Vector3(-s * 0.5, y, 0.0)
+	var sl := Vector3(-s * 0.32, y, 0.0)
+	var sr := Vector3(s * 0.32, y, 0.0)
+	var right := Vector3(s * 0.5, y, 0.0)
+	_ghost_add_cylinder(root, sl, sr, r, SHEATH, 0.0, 0.7)
+	_ghost_add_cylinder(root, left, sl, r * 0.45, COPPER, 0.8, 0.3)
+	_ghost_add_cylinder(root, sr, right, r * 0.45, COPPER, 0.8, 0.3)
+
+
+func _build_ghost_wire_corner(root: Node3D, top_y: float, s: float) -> void:
+	var r := s * 0.08
+	var y := top_y + r
+	var arm := s * 0.5
+	var sf := 0.64
+	var arms := [
+		Vector3(-arm, y, 0.0),
+		Vector3(0.0, y, arm),
+	]
+	for d in arms:
+		var tip_local: Vector3 = d
+		var sh_local := Vector3(d.x * sf, d.y, d.z * sf)
+		var ctr := Vector3(0.0, y, 0.0)
+		_ghost_add_cylinder(root, ctr, sh_local, r, SHEATH, 0.0, 0.7)
+		_ghost_add_cylinder(root, sh_local, tip_local, r * 0.45, COPPER, 0.8, 0.3)
+
+	var sphere_mi := MeshInstance3D.new()
+	sphere_mi.mesh = _make_box_mesh(Vector3(r * 2, r * 2, r * 2), SHEATH, 0.0, 0.7)
+	sphere_mi.mesh.material = _make_ghost_material(SHEATH, 0.0, 0.7)
+	sphere_mi.position = Vector3(0.0, y, 0.0)
+	root.add_child(sphere_mi)
+
+
+func _build_ghost_led(root: Node3D, top_y: float, s: float) -> void:
+	var r := s * 0.12
+	var y := top_y + r
+	_ghost_add_cylinder(root, Vector3(-s * 0.25, y, 0.0), Vector3(s * 0.25, y, 0.0), r, Color(0.9, 0.2, 0.2, 1.0), 0.25, 0.4)
+
+	# Glow indicator
+	var glow_mi := MeshInstance3D.new()
+	var glow_size := s * 0.15
+	var glow_mat := StandardMaterial3D.new()
+	glow_mat.albedo_color = Color(0.9, 0.3, 0.3, 0.35)
+	glow_mat.emission_enabled = true
+	glow_mat.emission = Color(0.9, 0.3, 0.3, 1.0)
+	glow_mat.emission_energy_multiplier = 1.5
+	glow_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var glow_mesh := BoxMesh.new()
+	glow_mesh.size = Vector3(glow_size, glow_size, glow_size)
+	glow_mesh.material = glow_mat
+	glow_mi.mesh = glow_mesh
+	glow_mi.position = Vector3(0.0, top_y + s * 0.35, 0.0)
+	root.add_child(glow_mi)
+
+	# External LED top model (GLB) - matches game_controller's _update_led_model positioning
+	var led_model := LED_TOP_SCENE.instantiate()
+	# Root already rotated by ghost_orient * 90°; LED model needs an extra 180° (PI)
+	var local_angle := PI
+	var xf_basis := Basis(Vector3.UP, local_angle)
+	var model_scale: float = 0.3
+	xf_basis = xf_basis.scaled(Vector3(model_scale, model_scale, model_scale))
+	led_model.transform = Transform3D(xf_basis, Vector3(0.0, top_y + 0.5, 0.0))
+	root.add_child(led_model)
+
+
+func _build_ghost_wire_t(root: Node3D, top_y: float, s: float) -> void:
+	var r := s * 0.08
+	var y := top_y + r
+	var arm := s * 0.5
+	var sf := 0.6
+	var arms := [
+		Vector3(arm, y, 0.0),
+		Vector3(-arm, y, 0.0),
+		Vector3(0.0, y, -arm),
+	]
+	for d in arms:
+		var tip_local: Vector3 = d
+		var sh_local := Vector3(d.x * sf, d.y, d.z * sf)
+		var ctr := Vector3(0.0, y, 0.0)
+		_ghost_add_cylinder(root, ctr, sh_local, r, SHEATH, 0.0, 0.7)
+		_ghost_add_cylinder(root, sh_local, tip_local, r * 0.45, COPPER, 0.8, 0.3)
+
+	var sphere_mi := MeshInstance3D.new()
+	sphere_mi.mesh = _make_box_mesh(Vector3(r * 2.5, r * 2.5, r * 2.5), SHEATH, 0.0, 0.7)
+	sphere_mi.mesh.material = _make_ghost_material(SHEATH, 0.0, 0.7)
+	sphere_mi.position = Vector3(0.0, y, 0.0)
+	root.add_child(sphere_mi)
+
+
+func _update_ghost() -> void:
+	if ghost_active != prev_ghost_active:
+		if ghost_active:
+			_build_ghost()
+		else:
+			_clear_ghost()
+		prev_ghost_active = ghost_active
+	elif ghost_active:
+		# Rebuild every frame while dragging (position changes every drag event)
+		_build_ghost()
